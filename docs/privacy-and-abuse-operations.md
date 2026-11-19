@@ -1,0 +1,42 @@
+# Personvern og misbruk i Sprøyt-betaen
+
+Driftsgrunnlag for [#356](https://github.com/hbjoroy/sproyt/issues/356). Produkteigar godkjende dagens drift 7. november. Før breiare bruk må produkt/personvern namngje behandlingsansvarleg og kontaktpunkt, stadfeste brukargruppe, land, føremål, grunnlag per føremål, faktiske mottakarar og lagringstider. Før dato, ansvarleg og avgjerd i eit tilgangsstyrt register. Den som avgjer føremål og middel, må vurdere rolla for kvar behandling. [Datatilsynet om ansvar](https://www.datatilsynet.no/rettigheter-og-plikter/virksomhetenes-plikter/behandlingsansvarlig-og-databehandler/)
+
+## Kva operatøren må rekne med
+
+| Område og føremål | Kven har tilgang og kvar finst kopiar? | Kva kan ein gjere i dag? |
+|---|---|---|
+| Identitet, økter og profil for innlogging | Authentik for identitet, Sprøyt for profil og medlemskap. Nettlesar og eventuelle native klientar har eigne økter. | Eigen eksport omfattar profildata. Utlogging ryddar lokale informasjonskapslar. Vurder sperring og tilbakekalling separat for kvart system og kvar økttype. |
+| Chat, vedlegg og media for kanalsamtalar | Kanalmedlemmer, applikasjonen, PostgreSQL og mediaarbeidaren. Nedlasta filer finst òg hos mottakarar. | Eigen eksport inneheld autorisert historikk. Meldingar har avgrensa sletterettar. Kretssletting gjeld alle medlemmene og krev eit eige mandat. Kontroller originalar, avleidde filer og delte referansar særskilt. |
+| Agentminne, kjelder og mellombels posisjon | Den registrerte har eigen kontrollflate. Arbeidarar og konfigurerte modelltenester kan handsame kjeldeinnhald. Posisjonsbaserte svar kan vere synlege i kanalen. | Minne kan rettast, gløymast eller nullstillast. Mellombels kontekst har sju dagar, interaksjonsnotat nitti dagar og preferansar inga automatisk utløpstid. Posisjonsløyve varer inntil 30 minutt og kan tilbakekallast. Publiserte svar må vurderast separat. [Minne](agent-memory-worker-operations.md) · [Posisjon](agent-location-sharing.md) |
+| Modellkall, bilete og emneanalyse | Modellendepunkt, ComfyUI ved biletegenerering, kjeldekopiar, jobbar og publiserte resultat. Drift må kartleggje faktisk endepunkt, leverandør, loggar og slettemåte for kvar aktiv integrasjon. | Sjekk både ventande og påbegynt arbeid. Spor ekstern førespurnad med minst mogleg metadata. Ein lokal slettedato stadfestar berre den lokale kopien. |
+| Pushabonnement og leveringskø | Varslingstenesta, nettlesaren si push-teneste og mottakareininga. Endepunkt og abonnementsnøklar er avgrensa driftsdata. | Slå av abonnement der det er mogleg. Kontroller kø, nye forsøk og allereie leverte varsel separat. |
+| Arbeidsoppgåver, Heart-prosessar og GitHub-eksport | Deltakarar etter tilgang, Sprøyt, Heart og eventuelt eit mottakarrepo. | Spor korrelasjonen til den eksterne oppgåva. Produkteigar avgjer tiltak for delt historikk. Registrer kvittering frå ekstern eigar. |
+| Arrangement, deltaking og biletebidrag | Kanal og deltakingsflater, PostgreSQL og medielager. | Kontoeksporten har eigne delar for oppretta arrangement, eigne svar og biletbidrag. Skil delt arrangement frå personleg deltaking og biletfil. [Eksportadapter](../src/db/account_export.rs) |
+| Revisjon, drift og reservekopiar | Avgrensa driftstilgang til revisjonsspor, loggar, backup og eventuelle arkivkopiar. | Driftsgrunnlaget oppgir minst 365 dagar for beta-revisjon og 35 dagar som standard for databasebackup. Drift må kontrollere faktisk utløp, også på kopiar flytta ut av klynga, og registrere siste relevante kopidato. [Driftsgrunnlag](operations.md#retention-and-capacity) |
+
+For kvar rad som manglar stadfesta lagringstid, oppgir produkteigar føremål, foreslått frist, slettemekanisme og kven som skal kontrollere resultatet. Avklar kva som skal følgje ein innsynsførespurnad utover sjølvbetent eksport. [Datatilsynet om lagringsavgrensing](https://www.datatilsynet.no/rettigheter-og-plikter/personvernprinsippene/grunnleggende-personvernprinsipper/lagringsbegrensning/)
+
+## Førespurnad om sletting eller tilbakekalling
+
+1. Produkt/personvern tek imot førespurnaden privat, stadfestar identitet gjennom etablert kontakt og avklarer omfang og svarfrist. Bruk saksreferanse, ansvarleg og tidsstempel. Hald persondata og førespurnadar ute av offentlege GitHub-saker. [Datatilsynet om retting og sletting](https://www.datatilsynet.no/rettigheter-og-plikter/virksomhetenes-plikter/retting-og-sletting/)
+2. Avtal med brukaren kva sjølvbetente kontrollar som skal brukast før tilgang blir sperra. Tryggleik/drift avgrensar vidare tilgang i Authentik og kontrollerer eksisterande nettlesarøkter, opne samband, native økter og agentrettar kvar for seg. Før opp kvar veg som framleis kan brukast. Ver særleg merksam på allereie utferda økter.
+3. Områdeeigar følgjer kvar relevant rad i tabellen. Registrer om arbeid er kølagt, under handsaming, publisert eller sendt eksternt. Stadfest at ny publisering er sperra før sletting blir kvittert. Når dagens kontrollar ikkje rekk, hald den aktuelle delen av saka open hjå eigaren. Ta vare på andre deltakarar sin tilgang og historikk.
+4. Produkt/personvern grunngjev eventuelle unntak og avtalar oppfølging med mottakarane. Gi brukaren svar med gjennomførte tiltak, attståande kopiar, fristar og kontakt for retting. Drift registrerer nødvendige slettingar og tilbakekallingar for gjenoppretting i ei tilgangsstyrt oversikt utanfor det aktuelle backupsettet. Produkt/personvern må godkjenne eigar, lagringsstad, tilgang og utløp for denne oversikta.
+5. Ved gjenoppretting held drift den gjenoppretta databasen isolert frå trafikk og arbeidarar i begge miljø. Køyr den etablerte [minne- og posisjonsnullstillinga](../tools/reset-agent-memory-after-restore.sql), og avstem alle seinare slettingar, sperringar og tilbakekallingar mot ei uavhengig kjelde. Dersom oversikta manglar eller utfallet er uvisst, held drift den gjenoppretta kopien isolert og eskalerer til produkt/personvern.
+
+## Rapport og feilaktig inngrep
+
+Rapportør gir tryggleiksansvarleg ei privat skildring med tidspunkt og den minste referansen som identifiserer hendinga. Namngje sakseigar, svarveg og tidspunkt for ny vurdering. Ein kretsmoderator bruker dei ordinære rettane i den aktuelle kanalen. Tilgang til privat innhald krev eige mandat. [Kretsmoderatorar](circle-moderators.md)
+
+Tryggleik dokumenterer skade, mandat, omfang og utløp før eit mellombels tiltak. Vel eit reversibelt tiltak med minst mogleg konsekvens for andre brukarar. Produkt/personvern vurderer innvendingar og eventuelle varslingsplikter. Ved feil fjernar drift den konkrete sperra, sjekkar rettane mot medlemskap før inngrepet, prøver tilgang med den råka brukaren og gir vedkomande tilbakemelding. Irreversibelt sletta innhald krev eiga vurdering. Avgrens innsyn i saksbevis til sakseigar og nødvendig driftspersonell og avtal slettedato.
+
+## Skrivebordsøving 19. november 2026
+
+Gjennomgangen følgde tre konstruerte saker mot dokumenterte kontrollar og kjeldekode. Ingen personopplysningar eller produksjonskontoar vart brukte.
+
+| Hending | Kva kunne operatøren stadfeste? | Rest og ansvar før breiare bruk |
+|---|---|---|
+| Ein brukar ber om sletting medan ein posisjonsbunden modelljobb går. | Tilbakekalling av posisjonen sperrar framtidig publisering frå den gamle jobben. Eit kall som alt har gått til modellen, krev oppfølging hjå mottakaren. | Identitet/agent/drift må levere førehandsvising og verifisering per konto, også for aktive økter, andre jobbar og eksterne kopiar. Fullført kontosletting kan enno ikkje kvitterast samla. |
+| Backupen er eldre enn ei tilbakekalling. | Reset fjernar posisjonsløyve og minneprofilar og ryddar relevant upublisert arbeid. Opphavlege meldingar står att. | Drift/personvern må prøve uavhengig registrering og ny handheving av andre slettingar og sperringar før ein slik kopi får trafikk. |
+| Feil person er mellombels sperra. | Saksgangen identifiserer kva sperre som kan rullast tilbake, og kven som skal kontrollere medlemskap, ny innlogging og tilbakemelding. | Produkt/tryggleik må namngje privat rapporteringsveg og ansvarlege og gjennomføre ei operatørøving med testkonto før breiare bruk. |

@@ -243,6 +243,9 @@ and determine the affected retention window.
 
 ## Retention and capacity
 
+For an account request, abuse report or restore after revocation, follow the
+[data inventory and operator procedures](privacy-and-abuse-operations.md).
+
 Chat history is retained until a circle owner deletes it; audit events are
 retained for at least 365 days for the beta. Database backups default to 35
 days. A circle owner can use the `delete_circle` protocol command (or **Slett
