@@ -125,6 +125,8 @@ Gjer modulgrensa etterprøvbar med ei lita import-/avhengnadssjekk. Oppdater CI-
 
 ## 6. Leveranse D – første sjølvstendige arbeidar (#354)
 
+**Avgjerd 19. november 2026:** [Driftsroller, push-eigarskap og grunngjeve avvik](runtime-roles.md).
+
 **Førebels kandidat: push.** Han har eiga teneste, varig outbox og ekstern sideeffekt som kan feile uavhengig av chat. Endeleg val krev B og kontrollane nedanfor. Mediaarbeidaren er allereie isolert. Agentdialog/minne har meir komplisert versjons-/publiseringsavhengnad; emneanalyse er ny og må vere med i målingane før valet blir låst.
 
 | Rolle | Oppstart og avhengnader | Helse, avslutting og budsjett |
