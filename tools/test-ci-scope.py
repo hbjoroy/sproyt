@@ -84,6 +84,20 @@ class ScopeTests(unittest.TestCase):
         self.assertEqual((oidc['auth'], oidc['operations'], oidc['backend'], oidc['postgres']),
                          ('true', 'true', 'false', 'false'))
 
+    def test_operator_queries_use_postgres_contract(self):
+        for path in ('tools/account-privacy-preview.sql', 'tools/capacity-postgres-budget.sql',
+                     'tools/test-operator-sql.sh'):
+            with self.subTest(path=path):
+                result = ci_scope.scope([path])
+                self.assertEqual((result['browser'], result['postgres'], result['backend'],
+                                  result['frontend']), ('none', 'true', 'false', 'false'))
+                mixed = ci_scope.scope([path, 'tools/mcp-load.mjs'])
+                self.assertEqual((mixed['operations'], mixed['postgres']), ('true', 'true'))
+                unknown = ci_scope.scope([path, 'tools/unclassified-operator.sql'])
+                self.assertEqual((unknown['browser'], unknown['postgres']), ('full', 'true'))
+                frontend = ci_scope.scope([path, 'frontend/src/imagegen.ts'])
+                self.assertEqual((frontend['browser'], frontend['postgres']), ('imagegen', 'true'))
+
     def test_capacity_probe_changes_run_operational_contracts(self):
         paths = ['tools/capacity-core.mjs', 'tools/capacity-runtime.mjs', 'tools/capacity-probe.mjs',
                  'tools/capacity-sample.ps1', 'tools/test-capacity-probe.mjs']

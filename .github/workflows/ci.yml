@@ -376,6 +376,12 @@ jobs:
           psql --host 127.0.0.1 --username sproyt --dbname sproyt --command 'create database sproyt_pilot_upgrade;'
           SPROYT_TEST_UPGRADE_DATABASE_URL=postgres://sproyt:sproyt-ci@127.0.0.1:5432/sproyt_pilot_upgrade cargo test postgres_upgrade_preserves_v1_receipts --locked -- --ignored --test-threads=1
 
+      - name: Verify operator SQL against migrated synthetic fixtures
+        env:
+          PGHOST: 127.0.0.1
+          PGUSER: sproyt
+        run: bash tools/test-operator-sql.sh
+
       - name: Measure synthetic memory backup footprint
         run: |
           client_image='postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193'

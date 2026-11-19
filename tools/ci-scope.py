@@ -28,6 +28,8 @@ IDENTITY = {'deploy/authentik/kustomization.yaml',
             'tools/verify-signup-recovery-runtime.py'}
 OIDC_TOOLS = {'tools/verify-oidc-provider.sh', 'tools/test-oidc-provider-verifier.sh',
               'tools/fixtures/authentik-discovery.json'}
+OPERATOR_SQL = {'tools/account-privacy-preview.sql', 'tools/capacity-postgres-budget.sql',
+                'tools/test-operator-sql.sh'}
 OPERATIONS_TOOLS = {'tools/verify-production-rollout.sh', 'tools/test-production-rollout-verifier.sh',
                     'tools/publish-production-release-news.sh',
                     'tools/mcp-load.mjs', 'tools/test-mcp-load.mjs',
@@ -146,13 +148,13 @@ def application_scope(paths, force_full=False):
         return result('none', 'documentation/skill only', frontend=False)
     if paths <= POLICY:
         return result('none', 'CI policy only; selector and workflow contracts apply', frontend=False)
-    standalone_tools = IDENTITY | OIDC_TOOLS | CODEC_TOOLS | OPERATIONS_TOOLS | HEART_DELIVERY
+    standalone_tools = IDENTITY | OIDC_TOOLS | CODEC_TOOLS | OPERATIONS_TOOLS | HEART_DELIVERY | OPERATOR_SQL
     auth_tools = bool(paths & (IDENTITY | OIDC_TOOLS))
     operations_tools = bool(paths & (OPERATIONS_TOOLS | OIDC_TOOLS | HEART_DELIVERY))
     codec_tools = bool(paths & CODEC_TOOLS)
     if paths <= POLICY | standalone_tools:
         return result('none', 'standalone provider, codec or operational contracts', frontend=False,
-                      auth=auth_tools, codec=codec_tools, operations=operations_tools)
+                      auth=auth_tools, codec=codec_tools, operations=operations_tools, postgres=bool(paths & OPERATOR_SQL))
     if paths & IDENTITY:
         return full_checks('identity provider changes mixed with application or other runtime changes')
 
@@ -174,7 +176,7 @@ def application_scope(paths, force_full=False):
     application_auth = bool(paths & AUTH_SOURCES or any(p.startswith(AUTH_PREFIXES) for p in paths))
     checks = {
         'backend': bool(backend_paths),
-        'postgres': bool(backend_paths - RUST_ONLY),
+        'postgres': bool(backend_paths - RUST_ONLY or paths & OPERATOR_SQL),
         'codec': codec_tools or bool(paths & CODEC_SOURCES) or any(p.startswith('src/media_store/') for p in paths),
         'auth': auth_tools or application_auth,
         'operations': operations_tools or bool(paths & OPERATIONS_SOURCES) or any(p.startswith('src/operations/') for p in paths),
