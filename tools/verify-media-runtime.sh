@@ -14,6 +14,8 @@ docker run --rm --entrypoint /bin/sh local/sproyt-media-runtime-arm64 -ec '
   apk --root /worker-root --no-network info -e "glib=2.90.0-r0"
   apk --root /worker-root --no-network info -e "libexpat=2.10.0-r0"
   apk --root /worker-root --no-network info -e "zlib=1.4-r0"
+  apk --root /worker-root --no-network info -e "libcrypto3>=3.5.9-r1"
+  apk --root /worker-root --no-network info -e "libssl3>=3.5.9-r1"
   test -n "$(find /worker-root/usr/lib -name "*heif*.so*" -print -quit)"
 '
 docker build --target media-runtime-builder --build-arg TARGETARCH=amd64 -t local/sproyt-media-runtime .
@@ -21,6 +23,8 @@ docker run --rm --memory=512m --cpus=1 --entrypoint /bin/sh local/sproyt-media-r
   apk --root /worker-root --no-network info -e "glib=2.90.0-r0"
   apk --root /worker-root --no-network info -e "libexpat=2.10.0-r0"
   apk --root /worker-root --no-network info -e "zlib=1.4-r0"
+  apk --root /worker-root --no-network info -e "libcrypto3>=3.5.9-r1"
+  apk --root /worker-root --no-network info -e "libssl3>=3.5.9-r1"
   mkdir -p /worker-root/tmp
   chroot /worker-root /usr/bin/vips black /tmp/large.v 10000 10000 --bands 3
   chroot /worker-root /usr/bin/vips jpegsave /tmp/large.v /tmp/original.jpg
