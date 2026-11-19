@@ -1812,7 +1812,7 @@ mod http_tests {
 #[cfg(test)]
 mod export_tests {
     use super::*;
-    use crate::domain::ChatRepository;
+    use crate::account_data::AccountExportRepository;
     #[tokio::test]
     async fn portable_export_includes_own_events_answers_and_image_contributions() {
         let repository = crate::db::SqliteChatRepository::connect("sqlite::memory:")

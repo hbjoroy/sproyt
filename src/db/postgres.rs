@@ -325,17 +325,10 @@ impl PostgresChatRepository {
     }
 }
 
-impl ChatRepository for PostgresChatRepository {
-    fn health_check(&self) -> RepositoryFuture<'_, ()> {
-        Box::pin(async move {
-            sqlx::query_scalar::<_, i32>("select 1")
-                .fetch_one(&self.pool)
-                .await
-                .map_err(sql_error)
-                .map(|_| ())
-        })
-    }
-    fn upsert_user<'a>(&'a self, user: User) -> RepositoryFuture<'a, User> {
+use crate::{account_data::AccountExportRepository, domain::ProfileRepository};
+
+impl ProfileRepository for PostgresChatRepository {
+    fn upsert_user(&self, user: User) -> RepositoryFuture<'_, User> {
         Box::pin(async move {
             let mut transaction = self.pool.begin().await.map_err(sql_error)?;
             let mut user = user;
@@ -416,6 +409,85 @@ impl ChatRepository for PostgresChatRepository {
                 .map_err(sql_error)?;
             transaction.commit().await.map_err(sql_error)?;
             Ok(user)
+        })
+    }
+}
+
+impl AccountExportRepository for PostgresChatRepository {
+    fn start_user_export(
+        &self,
+        actor: UserId,
+        deadline: tokio::time::Instant,
+        permit: tokio::sync::OwnedSemaphorePermit,
+    ) -> crate::account_data::AccountExportFuture<'_> {
+        use crate::account_data::{AccountExport, AccountExportError};
+
+        Box::pin(async move {
+            // One locally active export uses one connection. A pool of one
+            // cannot reserve any capacity for chat during a download.
+            if self.pool.options().get_max_connections() < 2 {
+                return Err(AccountExportError::Unavailable);
+            }
+            let mut tx = tokio::time::timeout_at(deadline, async {
+                let mut tx = self.pool.begin().await.map_err(sql_error)?;
+                for sql in [
+                    "set transaction isolation level repeatable read read only",
+                    "set local statement_timeout = '10s'",
+                    "set local idle_in_transaction_session_timeout = '120s'",
+                ] {
+                    sqlx::query(sql)
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(sql_error)?;
+                }
+
+                // The one-key namespace is disjoint from the two-int global
+                // slots. Transaction ownership releases both on rollback.
+                let account_admitted = sqlx::query_scalar::<_, bool>(
+                    "select pg_try_advisory_xact_lock(hashtextextended($1, 731594721))",
+                )
+                .bind(actor.to_string())
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(sql_error)?;
+                if !account_admitted {
+                    return Err(AccountExportError::Busy);
+                }
+                for slot in 0..2 {
+                    let admitted =
+                        sqlx::query_scalar::<_, bool>("select pg_try_advisory_xact_lock($1, $2)")
+                            .bind(731594721_i32)
+                            .bind(slot)
+                            .fetch_one(&mut *tx)
+                            .await
+                            .map_err(sql_error)?;
+                    if admitted {
+                        return Ok(tx);
+                    }
+                }
+                Err(AccountExportError::Busy)
+            })
+            .await
+            .map_err(|_| AccountExportError::Timeout)??;
+            Ok(AccountExport::start(
+                deadline,
+                permit,
+                |writer| async move {
+                    super::account_export::write_account_export!(tx, true, actor, writer)
+                },
+            ))
+        })
+    }
+}
+
+impl ChatRepository for PostgresChatRepository {
+    fn health_check(&self) -> RepositoryFuture<'_, ()> {
+        Box::pin(async move {
+            sqlx::query_scalar::<_, i32>("select 1")
+                .fetch_one(&self.pool)
+                .await
+                .map_err(sql_error)
+                .map(|_| ())
         })
     }
 
@@ -1127,71 +1199,6 @@ impl ChatRepository for PostgresChatRepository {
             }
             tx.commit().await.map_err(sql_error)?;
             Ok(())
-        })
-    }
-
-    fn start_user_export(
-        &self,
-        actor: UserId,
-        deadline: tokio::time::Instant,
-        permit: tokio::sync::OwnedSemaphorePermit,
-    ) -> crate::domain::account_export::AccountExportFuture<'_> {
-        use crate::domain::account_export::{AccountExport, AccountExportError};
-
-        Box::pin(async move {
-            // One locally active export uses one connection. A pool of one
-            // cannot reserve any capacity for chat during a download.
-            if self.pool.options().get_max_connections() < 2 {
-                return Err(AccountExportError::Unavailable);
-            }
-            let mut tx = tokio::time::timeout_at(deadline, async {
-                let mut tx = self.pool.begin().await.map_err(sql_error)?;
-                for sql in [
-                    "set transaction isolation level repeatable read read only",
-                    "set local statement_timeout = '10s'",
-                    "set local idle_in_transaction_session_timeout = '120s'",
-                ] {
-                    sqlx::query(sql)
-                        .execute(&mut *tx)
-                        .await
-                        .map_err(sql_error)?;
-                }
-
-                // The one-key namespace is disjoint from the two-int global
-                // slots. Transaction ownership releases both on rollback.
-                let account_admitted = sqlx::query_scalar::<_, bool>(
-                    "select pg_try_advisory_xact_lock(hashtextextended($1, 731594721))",
-                )
-                .bind(actor.to_string())
-                .fetch_one(&mut *tx)
-                .await
-                .map_err(sql_error)?;
-                if !account_admitted {
-                    return Err(AccountExportError::Busy);
-                }
-                for slot in 0..2 {
-                    let admitted =
-                        sqlx::query_scalar::<_, bool>("select pg_try_advisory_xact_lock($1, $2)")
-                            .bind(731594721_i32)
-                            .bind(slot)
-                            .fetch_one(&mut *tx)
-                            .await
-                            .map_err(sql_error)?;
-                    if admitted {
-                        return Ok(tx);
-                    }
-                }
-                Err(AccountExportError::Busy)
-            })
-            .await
-            .map_err(|_| AccountExportError::Timeout)??;
-            Ok(AccountExport::start(
-                deadline,
-                permit,
-                |writer| async move {
-                    super::account_export::write_account_export!(tx, true, actor, writer)
-                },
-            ))
         })
     }
 

@@ -334,6 +334,10 @@ pub(crate) async fn test_state(
     );
     repository.migrate().await.unwrap();
     AppState {
+        account_data: crate::account_data::AccountDataService::new(
+            repository.clone(),
+            repository.clone(),
+        ),
         topics: None,
         media_store: None,
         auth,

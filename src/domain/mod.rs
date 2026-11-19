@@ -1,4 +1,3 @@
-pub(crate) mod account_export;
 pub(crate) mod direct_activity;
 mod onboarding;
 mod policy;
@@ -18,6 +17,8 @@ pub use repository::{
     CHANNEL_REFERENCE_BATCH_MAX, ResolvedChannelReference, THREAD_ROOT_PREVIEW_BATCH_MAX,
     ThreadRootPreview,
 };
-pub use repository::{ChatRepository, PresenceLease, RepositoryError, RepositoryFuture};
+pub use repository::{
+    ChatRepository, PresenceLease, ProfileRepository, RepositoryError, RepositoryFuture,
+};
 pub(crate) use repository::{personal_channel, personal_link_body};
 pub use sproyt_protocol::*;

@@ -32,7 +32,8 @@ use sha2::{Digest, Sha256};
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
-use super::account_export::AccountExportFuture;
+#[cfg(test)]
+use crate::account_data::{AccountExportFuture, AccountExportRepository};
 
 pub(crate) fn personal_channel(owner: UserId) -> Channel {
     let id = ChannelId::generate();
@@ -181,9 +182,13 @@ mod thread_root_preview_tests {
     }
 }
 
-pub trait ChatRepository: Send + Sync + 'static {
+/// Shared provisioning of an authenticated principal's persisted profile.
+pub trait ProfileRepository: Send + Sync + 'static {
+    fn upsert_user(&self, user: User) -> RepositoryFuture<'_, User>;
+}
+
+pub trait ChatRepository: ProfileRepository {
     fn health_check(&self) -> RepositoryFuture<'_, ()>;
-    fn upsert_user<'a>(&'a self, user: User) -> RepositoryFuture<'a, User>;
     /// The private, never-reused position assigned to a human account.  This
     /// deliberately is not part of `UserProfile`: other people must not be
     /// able to enumerate early adopters through people lists.
@@ -279,41 +284,6 @@ pub trait ChatRepository: Send + Sync + 'static {
         owner: UserId,
         source_id: MessageId,
     ) -> RepositoryFuture<'_, Option<MessageId>>;
-    fn start_user_export(
-        &self,
-        actor: UserId,
-        deadline: tokio::time::Instant,
-        permit: tokio::sync::OwnedSemaphorePermit,
-    ) -> AccountExportFuture<'_>;
-    #[cfg(test)]
-    fn export_user_data(&self, actor: UserId) -> RepositoryFuture<'_, PortableUserExport> {
-        Box::pin(async move {
-            use futures_util::{TryStreamExt, pin_mut};
-            let permit = std::sync::Arc::new(tokio::sync::Semaphore::new(1))
-                .try_acquire_owned()
-                .expect("test export permit");
-            let export = self
-                .start_user_export(
-                    actor,
-                    tokio::time::Instant::now() + super::account_export::ACCOUNT_EXPORT_TIMEOUT,
-                    permit,
-                )
-                .await
-                .map_err(|error| RepositoryError::Storage(error.to_string()))?;
-            let stream = export.into_stream();
-            pin_mut!(stream);
-            let mut bytes = Vec::new();
-            while let Some(chunk) = stream
-                .try_next()
-                .await
-                .map_err(|error| RepositoryError::Storage(error.to_string()))?
-            {
-                bytes.extend(chunk);
-            }
-            serde_json::from_slice(&bytes)
-                .map_err(|error| RepositoryError::Storage(error.to_string()))
-        })
-    }
     fn favorite_circles<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, Vec<CircleId>>;
     fn set_circle_favorite<'a>(
         &'a self,
@@ -627,6 +597,172 @@ impl Default for InMemoryChatRepository {
 }
 
 #[cfg(test)]
+impl ProfileRepository for InMemoryChatRepository {
+    fn upsert_user(&self, user: User) -> RepositoryFuture<'_, User> {
+        Box::pin(async move {
+            let mut state = self.lock_state()?;
+            let mut user = user;
+            if let Some(existing) = state.users.get(&user.id) {
+                // Authentication refreshes identity binding, never a locally
+                // chosen display name or established public handle.
+                user.display_name = existing.display_name.clone();
+                if existing.handle.is_some() {
+                    user.handle = existing.handle.clone();
+                }
+            }
+            if user.kind == crate::domain::PrincipalKind::Human
+                && !state.signup_ordinals.contains_key(&user.id)
+            {
+                state.next_signup_ordinal += 1;
+                let ordinal = state.next_signup_ordinal;
+                state.signup_ordinals.insert(user.id.clone(), ordinal);
+            }
+            state.users.insert(user.id.clone(), user.clone());
+            let general_channel = state
+                .channels
+                .values()
+                .find(|channel| channel.slug.as_str() == "general")
+                .map(|channel| channel.id.clone());
+            if let Some(channel_id) = general_channel {
+                state
+                    .memberships
+                    .entry((channel_id.clone(), user.id.clone()))
+                    .or_insert(Membership {
+                        channel_id,
+                        user_id: user.id.clone(),
+                        role: MembershipRole::Member,
+                        last_read_sequence: ChannelSequence::new(0),
+                    });
+            }
+            Ok(user)
+        })
+    }
+}
+
+#[cfg(test)]
+impl AccountExportRepository for InMemoryChatRepository {
+    fn start_user_export(
+        &self,
+        _actor: UserId,
+        _deadline: tokio::time::Instant,
+        _permit: tokio::sync::OwnedSemaphorePermit,
+    ) -> AccountExportFuture<'_> {
+        Box::pin(async { Err(crate::account_data::AccountExportError::Unavailable) })
+    }
+
+    fn export_user_data<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, PortableUserExport> {
+        Box::pin(async move {
+            let state = self.lock_state()?;
+            let user = state
+                .users
+                .get(&actor)
+                .cloned()
+                .ok_or(RepositoryError::NotFound)?;
+            let mut circles = state
+                .circle_memberships
+                .values()
+                .filter(|membership| membership.user_id == actor)
+                .filter_map(|membership| {
+                    state
+                        .circles
+                        .get(&membership.circle_id)
+                        .cloned()
+                        .map(|circle| ExportedCircle {
+                            circle,
+                            role: membership.role.clone(),
+                        })
+                })
+                .collect::<Vec<_>>();
+            circles.sort_by(|left, right| left.circle.slug.cmp(&right.circle.slug));
+
+            let mut channels = state
+                .memberships
+                .values()
+                .filter(|membership| membership.user_id == actor)
+                .filter_map(|membership| {
+                    let channel = state.channels.get(&membership.channel_id)?;
+                    let messages = state.messages.get(&channel.id).cloned().unwrap_or_default();
+                    Some(ExportedChannel {
+                        channel: ChannelSummary {
+                            events_enabled: state.events_enabled_channels.contains(&channel.id),
+                            hidden: state.hidden_channels.contains(&channel.id),
+                            is_personal: state
+                                .personal_spaces
+                                .get(&actor)
+                                .is_some_and(|(id, _)| id == &channel.id),
+                            direct_activity: None,
+                            id: channel.id.clone(),
+                            slug: channel.slug.clone(),
+                            name: channel.name.clone(),
+                            kind: channel.kind.clone(),
+                            circle_id: channel.circle_id.clone(),
+                            direct_user_id: state.direct_conversations.iter().find_map(
+                                |((left, right), direct_channel_id)| {
+                                    (direct_channel_id == &channel.id).then(|| {
+                                        if left == &actor {
+                                            right.clone()
+                                        } else {
+                                            left.clone()
+                                        }
+                                    })
+                                },
+                            ),
+                            is_direct: state
+                                .direct_conversations
+                                .values()
+                                .any(|id| id == &channel.id)
+                                || state.direct_group_conversations.contains_key(&channel.id),
+                            description: state
+                                .channel_descriptions
+                                .get(&channel.id)
+                                .cloned()
+                                .unwrap_or_default(),
+                            role: membership.role.clone(),
+                            last_read_sequence: membership.last_read_sequence,
+                            latest_sequence: messages
+                                .last()
+                                .map_or(ChannelSequence::new(0), |message| message.sequence),
+                        },
+                        messages,
+                    })
+                })
+                .collect::<Vec<_>>();
+            channels.sort_by(|left, right| left.channel.slug.cmp(&right.channel.slug));
+            let mut favorite_circles = state
+                .favorite_circles
+                .iter()
+                .filter(|(_, user)| user == &actor)
+                .map(|(circle, _)| circle.clone())
+                .collect::<Vec<_>>();
+            favorite_circles.sort_by_key(ToString::to_string);
+            Ok(PortableUserExport {
+                format: PORTABLE_USER_EXPORT_FORMAT.to_owned(),
+                exported_at: Utc::now(),
+                user,
+                signup_ordinal: state.signup_ordinals.get(&actor).copied(),
+                saved_emojis: state.saved_emojis.get(&actor).cloned().unwrap_or_default(),
+                favorite_circles,
+                personal_note: state
+                    .personal_spaces
+                    .get(&actor)
+                    .map(|(_, note)| note.clone()),
+                saved_statuses: state
+                    .saved_statuses
+                    .get(&actor)
+                    .cloned()
+                    .unwrap_or_default(),
+                circles,
+                channels,
+                agent_memories: Vec::new(),
+                events_created: Vec::new(),
+                event_responses: Vec::new(),
+                event_image_contributions: Vec::new(),
+            })
+        })
+    }
+}
+
+#[cfg(test)]
 impl ChatRepository for InMemoryChatRepository {
     fn health_check(&self) -> RepositoryFuture<'_, ()> {
         Box::pin(async { Ok(()) })
@@ -726,45 +862,6 @@ impl ChatRepository for InMemoryChatRepository {
             state.messages.entry(channel_id).or_default().push(message);
             state.personal_saved_links.insert(key, message_id);
             Ok(Some(message_id))
-        })
-    }
-    fn upsert_user<'a>(&'a self, user: User) -> RepositoryFuture<'a, User> {
-        Box::pin(async move {
-            let mut state = self.lock_state()?;
-            let mut user = user;
-            if let Some(existing) = state.users.get(&user.id) {
-                // Authentication refreshes identity binding, never a locally
-                // chosen display name or established public handle.
-                user.display_name = existing.display_name.clone();
-                if existing.handle.is_some() {
-                    user.handle = existing.handle.clone();
-                }
-            }
-            if user.kind == crate::domain::PrincipalKind::Human
-                && !state.signup_ordinals.contains_key(&user.id)
-            {
-                state.next_signup_ordinal += 1;
-                let ordinal = state.next_signup_ordinal;
-                state.signup_ordinals.insert(user.id.clone(), ordinal);
-            }
-            state.users.insert(user.id.clone(), user.clone());
-            let general_channel = state
-                .channels
-                .values()
-                .find(|channel| channel.slug.as_str() == "general")
-                .map(|channel| channel.id.clone());
-            if let Some(channel_id) = general_channel {
-                state
-                    .memberships
-                    .entry((channel_id.clone(), user.id.clone()))
-                    .or_insert(Membership {
-                        channel_id,
-                        user_id: user.id.clone(),
-                        role: MembershipRole::Member,
-                        last_read_sequence: ChannelSequence::new(0),
-                    });
-            }
-            Ok(user)
         })
     }
 
@@ -1324,126 +1421,6 @@ impl ChatRepository for InMemoryChatRepository {
             }
             state.favorite_circles.insert(key);
             Ok(())
-        })
-    }
-
-    fn start_user_export(
-        &self,
-        _actor: UserId,
-        _deadline: tokio::time::Instant,
-        _permit: tokio::sync::OwnedSemaphorePermit,
-    ) -> AccountExportFuture<'_> {
-        Box::pin(async { Err(super::account_export::AccountExportError::Unavailable) })
-    }
-
-    fn export_user_data<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, PortableUserExport> {
-        Box::pin(async move {
-            let state = self.lock_state()?;
-            let user = state
-                .users
-                .get(&actor)
-                .cloned()
-                .ok_or(RepositoryError::NotFound)?;
-            let mut circles = state
-                .circle_memberships
-                .values()
-                .filter(|membership| membership.user_id == actor)
-                .filter_map(|membership| {
-                    state
-                        .circles
-                        .get(&membership.circle_id)
-                        .cloned()
-                        .map(|circle| ExportedCircle {
-                            circle,
-                            role: membership.role.clone(),
-                        })
-                })
-                .collect::<Vec<_>>();
-            circles.sort_by(|left, right| left.circle.slug.cmp(&right.circle.slug));
-
-            let mut channels = state
-                .memberships
-                .values()
-                .filter(|membership| membership.user_id == actor)
-                .filter_map(|membership| {
-                    let channel = state.channels.get(&membership.channel_id)?;
-                    let messages = state.messages.get(&channel.id).cloned().unwrap_or_default();
-                    Some(ExportedChannel {
-                        channel: ChannelSummary {
-                            events_enabled: state.events_enabled_channels.contains(&channel.id),
-                            hidden: state.hidden_channels.contains(&channel.id),
-                            is_personal: state
-                                .personal_spaces
-                                .get(&actor)
-                                .is_some_and(|(id, _)| id == &channel.id),
-                            direct_activity: None,
-                            id: channel.id.clone(),
-                            slug: channel.slug.clone(),
-                            name: channel.name.clone(),
-                            kind: channel.kind.clone(),
-                            circle_id: channel.circle_id.clone(),
-                            direct_user_id: state.direct_conversations.iter().find_map(
-                                |((left, right), direct_channel_id)| {
-                                    (direct_channel_id == &channel.id).then(|| {
-                                        if left == &actor {
-                                            right.clone()
-                                        } else {
-                                            left.clone()
-                                        }
-                                    })
-                                },
-                            ),
-                            is_direct: state
-                                .direct_conversations
-                                .values()
-                                .any(|id| id == &channel.id)
-                                || state.direct_group_conversations.contains_key(&channel.id),
-                            description: state
-                                .channel_descriptions
-                                .get(&channel.id)
-                                .cloned()
-                                .unwrap_or_default(),
-                            role: membership.role.clone(),
-                            last_read_sequence: membership.last_read_sequence,
-                            latest_sequence: messages
-                                .last()
-                                .map_or(ChannelSequence::new(0), |message| message.sequence),
-                        },
-                        messages,
-                    })
-                })
-                .collect::<Vec<_>>();
-            channels.sort_by(|left, right| left.channel.slug.cmp(&right.channel.slug));
-            let mut favorite_circles = state
-                .favorite_circles
-                .iter()
-                .filter(|(_, user)| user == &actor)
-                .map(|(circle, _)| circle.clone())
-                .collect::<Vec<_>>();
-            favorite_circles.sort_by_key(ToString::to_string);
-            Ok(PortableUserExport {
-                format: PORTABLE_USER_EXPORT_FORMAT.to_owned(),
-                exported_at: Utc::now(),
-                user,
-                signup_ordinal: state.signup_ordinals.get(&actor).copied(),
-                saved_emojis: state.saved_emojis.get(&actor).cloned().unwrap_or_default(),
-                favorite_circles,
-                personal_note: state
-                    .personal_spaces
-                    .get(&actor)
-                    .map(|(_, note)| note.clone()),
-                saved_statuses: state
-                    .saved_statuses
-                    .get(&actor)
-                    .cloned()
-                    .unwrap_or_default(),
-                circles,
-                channels,
-                agent_memories: Vec::new(),
-                events_created: Vec::new(),
-                event_responses: Vec::new(),
-                event_image_contributions: Vec::new(),
-            })
         })
     }
 

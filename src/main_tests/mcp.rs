@@ -75,6 +75,10 @@ async fn mcp_uses_agent_scope_idempotency_and_immediate_revocation() {
         .await
         .unwrap();
     let state = AppState {
+        account_data: crate::account_data::AccountDataService::new(
+            repository.clone(),
+            repository.clone(),
+        ),
         topics: None,
         native_sessions: None,
         media_store: None,
@@ -318,6 +322,10 @@ async fn mcp_process_tools_enforce_separate_scopes_and_idempotency() {
         .await
         .unwrap();
     let state = AppState {
+        account_data: crate::account_data::AccountDataService::new(
+            repository.clone(),
+            repository.clone(),
+        ),
         topics: None,
         native_sessions: None,
         media_store: None,
@@ -551,6 +559,10 @@ async fn mcp_rejects_incompatible_transport_requests_before_dispatch() {
     );
     repository.migrate().await.unwrap();
     let state = AppState {
+        account_data: crate::account_data::AccountDataService::new(
+            repository.clone(),
+            repository.clone(),
+        ),
         topics: None,
         native_sessions: None,
         media_store: None,

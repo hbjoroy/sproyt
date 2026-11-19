@@ -15,6 +15,7 @@ use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
 use crate::{
+    account_data::AccountDataService,
     agent::AgentService,
     auth::AuthService,
     chat::ChatEngine,
@@ -27,11 +28,12 @@ use crate::{
     process::{HeartGateway, ProcessService, SharedProcessGateway},
     web::account::{
         add_favorite_circle, add_saved_emoji, check_push_subscription,
-        disable_channel_notifications, enable_channel_notifications, export_my_data,
-        favorite_circles, notification_settings, record_client_event, remove_favorite_circle,
-        remove_saved_emoji, remove_saved_status, save_notification_preferences, saved_emojis,
-        saved_statuses, subscribe_push, unsubscribe_push,
+        disable_channel_notifications, enable_channel_notifications, favorite_circles,
+        notification_settings, record_client_event, remove_favorite_circle, remove_saved_emoji,
+        remove_saved_status, save_notification_preferences, saved_emojis, saved_statuses,
+        subscribe_push, unsubscribe_push,
     },
+    web::account_export::export_my_data,
     web::agents::{
         approve_agent_message, create_agent, grant_agent, revoke_agent, revoke_agent_grant,
     },
@@ -67,6 +69,7 @@ pub(super) struct AppState {
     pub(super) media_store: Option<crate::media_store::MediaStore>,
     pub(super) auth: AuthService,
     pub(super) chat: ChatEngine,
+    pub(super) account_data: AccountDataService,
     pub(super) operations: OperationalState,
     pub(super) processes: ProcessService,
     pub(super) agents: AgentService,
@@ -178,6 +181,7 @@ pub(super) async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>
         imagegen,
         auth,
         chat,
+        account_data: AccountDataService::new(repositories.profiles, repositories.account_exports),
         operations: operations.clone(),
         processes: ProcessService::start(repositories.process, process_gateway_from_env()?),
         agents: AgentService::new(repositories.agent),

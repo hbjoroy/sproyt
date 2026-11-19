@@ -12,14 +12,17 @@ use sqlx::{PgPool, postgres::PgPoolOptions};
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::account_data::AccountExportRepository;
 use crate::agent::{AgentRepository, SharedAgentRepository};
 use crate::config::{DatabaseConfig, DatabaseKind};
-use crate::domain::{ChatRepository, MediaId, MessageBody, RepositoryError};
+use crate::domain::{ChatRepository, MediaId, MessageBody, ProfileRepository, RepositoryError};
 use crate::integration::{IntegrationRepository, SharedIntegrationRepository};
 use crate::process::{ProcessRepository, SharedProcessRepository};
 
 pub struct Repositories {
     pub chat: Arc<dyn ChatRepository>,
+    pub profiles: Arc<dyn ProfileRepository>,
+    pub(crate) account_exports: Arc<dyn AccountExportRepository>,
     pub process: SharedProcessRepository,
     pub agent: SharedAgentRepository,
     pub integration: SharedIntegrationRepository,
@@ -65,9 +68,13 @@ pub async fn connect_repositories(
             let chat: Arc<dyn ChatRepository> = repository.clone();
             let process: Arc<dyn ProcessRepository> = repository.clone();
             let agent: Arc<dyn AgentRepository> = repository.clone();
+            let profiles: Arc<dyn ProfileRepository> = repository.clone();
+            let account_exports: Arc<dyn AccountExportRepository> = repository.clone();
             let integration: Arc<dyn IntegrationRepository> = repository;
             Ok(Repositories {
                 chat,
+                profiles,
+                account_exports,
                 process,
                 agent,
                 integration,
@@ -81,9 +88,13 @@ pub async fn connect_repositories(
             let chat: Arc<dyn ChatRepository> = repository.clone();
             let process: Arc<dyn ProcessRepository> = repository.clone();
             let agent: Arc<dyn AgentRepository> = repository.clone();
+            let profiles: Arc<dyn ProfileRepository> = repository.clone();
+            let account_exports: Arc<dyn AccountExportRepository> = repository.clone();
             let integration: Arc<dyn IntegrationRepository> = repository;
             Ok(Repositories {
                 chat,
+                profiles,
+                account_exports,
                 process,
                 agent,
                 integration,
@@ -271,9 +282,9 @@ async fn verify_media_reads_contract<R: ChatRepository>(repository: &R, suffix: 
 }
 
 #[cfg(test)]
-pub async fn verify_chat_repository_contract<R>(repository: &R, suffix: &str)
+pub(crate) async fn verify_chat_repository_contract<R>(repository: &R, suffix: &str)
 where
-    R: ChatRepository,
+    R: ChatRepository + AccountExportRepository,
 {
     use crate::domain::{
         AcceptCircleInvitation, AddChannelMember, ChannelKind, ChannelRef, ChannelSequence,
@@ -1550,7 +1561,10 @@ where
 }
 
 #[cfg(test)]
-async fn verify_saved_status_history_contract<R: ChatRepository>(repository: &R, suffix: &str) {
+async fn verify_saved_status_history_contract<R: ChatRepository + AccountExportRepository>(
+    repository: &R,
+    suffix: &str,
+) {
     use crate::domain::{DisplayName, PrincipalKind, RepositoryError, User, UserId};
     use chrono::{Duration, Utc};
     let owner = UserId::named(format!("status-owner-{suffix}"));
@@ -1758,7 +1772,10 @@ async fn postgres_saved_status_history_contract() {
 }
 
 #[cfg(test)]
-async fn verify_circle_favorites_contract<R: ChatRepository>(repository: &R, suffix: &str) {
+async fn verify_circle_favorites_contract<R: ChatRepository + AccountExportRepository>(
+    repository: &R,
+    suffix: &str,
+) {
     use crate::domain::{
         AcceptCircleInvitation, ChannelSlug, CircleId, CreateCircle, CreateCircleInvitation,
         DeleteCircle, DisplayName, LeaveCircle, PrincipalKind, User, UserId,
@@ -1957,7 +1974,10 @@ async fn postgres_circle_favorites_contract() {
 }
 
 #[cfg(test)]
-async fn verify_saved_emoji_contract<R: ChatRepository>(repository: &R, suffix: &str) {
+async fn verify_saved_emoji_contract<R: ChatRepository + AccountExportRepository>(
+    repository: &R,
+    suffix: &str,
+) {
     use crate::domain::{DisplayName, PrincipalKind, User, UserId};
     let owner = UserId::named(format!("emoji-owner-{suffix}"));
     let other = UserId::named(format!("emoji-other-{suffix}"));
@@ -2387,9 +2407,9 @@ where
 }
 
 #[cfg(test)]
-pub async fn verify_repository_contract<R>(repository: &R, suffix: &str)
+pub(crate) async fn verify_repository_contract<R>(repository: &R, suffix: &str)
 where
-    R: ChatRepository + ProcessRepository + AgentRepository,
+    R: ChatRepository + AccountExportRepository + ProcessRepository + AgentRepository,
 {
     use crate::{
         agent::{AgentScope, CreateAgent, GrantAgent},
