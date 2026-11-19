@@ -991,6 +991,74 @@ mod tests {
                 .await
                 .unwrap()
         );
+        // A private outbox on this one-connection pool keeps the claim test independent
+        // of other PostgreSQL fixtures. Read the actual subscription through its UUID.
+        let device: Uuid = sqlx::query_scalar("select id from push_subscriptions where user_id=$1")
+            .bind(alice.as_uuid())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        sqlx::raw_sql(
+            "create temporary table channels as select gen_random_uuid() as id, 'Chat'::text as name;
+             create temporary table messages as select gen_random_uuid() as id, id as channel_id,
+                'Sender'::text as sender_display_name, 'Test'::text as body, 1::bigint as sequence,
+                null::uuid as parent_message_id from channels;
+             create temporary table notification_outbox (like public.notification_outbox including defaults);"
+        ).execute(&pool).await.unwrap();
+        sqlx::query(
+            "insert into notification_outbox(subscription_id,recipient_id,message_id,kind)
+                     select $1,$2,id,'mention' from messages",
+        )
+        .bind(device)
+        .bind(alice.as_uuid())
+        .execute(&pool)
+        .await
+        .unwrap();
+        let (old, old_attempt) = notifications.claim().await.unwrap().unwrap();
+        sqlx::query("update notification_outbox set leased_until=now()-interval '1 second'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (current, attempt) = notifications.claim().await.unwrap().unwrap();
+        for result in [
+            DeliveryResult::Delivered,
+            DeliveryResult::Expired,
+            DeliveryResult::Retry("late".into()),
+        ] {
+            notifications
+                .complete(&old, old_attempt, result)
+                .await
+                .unwrap();
+        }
+        let intact: bool = sqlx::query_scalar(
+            "select o.leased_until is not null and o.delivered_at is null and o.last_error is null
+                    and s.last_success_at is null
+             from notification_outbox o join push_subscriptions s on s.id=o.subscription_id",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(intact);
+        notifications
+            .complete(&current, attempt, DeliveryResult::Retry("temporary".into()))
+            .await
+            .unwrap();
+        assert!(notifications.claim().await.unwrap().is_none());
+        sqlx::query("update notification_outbox set available_at=now()")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (current, attempt) = notifications.claim().await.unwrap().unwrap();
+        notifications
+            .complete(&current, attempt, DeliveryResult::Expired)
+            .await
+            .unwrap();
+        assert!(
+            !notifications
+                .has_subscription(alice.clone(), &input.endpoint)
+                .await
+                .unwrap()
+        );
         notifications
             .unsubscribe(alice.clone(), input.endpoint.clone())
             .await
