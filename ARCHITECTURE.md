@@ -4,6 +4,8 @@ This is the living architecture document for Sproyt. It describes the code
 that runs today; update it when an architectural decision becomes code.
 The [scaling assessment plan](docs/architecture-scaling-assessment-plan.md)
 tracks proposals that have not yet been accepted as architecture.
+The [19 November architecture review](docs/architecture-review-2026-11-19.md)
+records quality targets, ownership, measured constraints and open decisions.
 
 ## Goals
 
