@@ -105,7 +105,8 @@ RUN case "$TARGETARCH" in \
        '@glibfix https://dl-cdn.alpinelinux.org/alpine/edge/main' \
        > /worker-root/etc/apk/repositories \
     && apk --root /worker-root --arch "$apk_arch" --initdb --no-scripts --no-cache \
-       add vips-tools=8.18.2-r0 vips-heif=8.18.2-r0 'glib@glibfix=2.90.0-r0' 'libexpat=2.10.0-r0' 'zlib=1.4-r0' 'libarchive>=3.8.7'
+       add vips-tools=8.18.2-r0 vips-heif=8.18.2-r0 'glib@glibfix=2.90.0-r0' 'libexpat=2.10.0-r0' 'zlib=1.4-r0' 'libarchive>=3.8.7' \
+           'libcrypto3>=3.5.9-r1' 'libssl3>=3.5.9-r1'
 
 FROM scratch AS media-worker
 ARG VCS_REF=unknown
