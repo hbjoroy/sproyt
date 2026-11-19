@@ -97,3 +97,27 @@ node --test tools/test-capacity-probe.mjs
 Passordet ovanfor er berre for den syntetiske eingongsinstansen. Runneren krev rett label, loopback-binding, ingen host-bind mounts, ressursgrenser og genererte databasenamn før skriving. Han startar og stoppar eigne API-prosessar og slettar eigne prøvedatabasar. Etterpå: kontroller eigarskap/ID, stopp berre denne fixture-instansen og fjern henne med det anonyme volumet. Evidens skal takast vare på før opprydding.
 
 Validering: 10 Node-kontraktar, 45 CI-scope-prøver og 5 browser-shard-prøver består; eksisterande MCP-lastkontrakt består; PowerShell-parser og `git diff --check` er reine. App-kode og frontend er uendra i denne leveransen; gyldig Rust/PostgreSQL/browser-CI frå #402 blir gjenbrukt.
+
+## Ny driftsprøve 19. november 2026
+
+**Avgjerd frå kapasitetsvurderinga:** Behald chataktøren og den delte poolen. Det mest presserande avviket er no plass til ordinære databaseinnloggingar. Ved to av tre punktprøver var alle ordinære plassar opptekne. Ei utrulling som treng nye samband må rekne inn migrering, nye og terminerande poddar og andre klientar før ho startar. Pooltak eller fleire API-replikaer på dei same 100 plassane kan auke presset.
+
+| UTC | Tilkopla klientar utan observatør | Plassar til nye ordinære klientar |
+| --- | ---: | ---: |
+| 21.08.13 | 97 | 0 |
+| 21.08.26 | 97 | 0 |
+| 21.08.48 | 96 | 1 |
+
+PostgreSQL hadde framleis 100 plassar, tre reserverte for superbrukar og ingen andre reserverte. Alle etablerte klientar tel mot innslagsgrensa på 97, også dei tre eksisterande superbrukarklientane i dei to første prøvene. Klokka 21.08.48 var fordelinga API/media 15, Heart 6, identitet 9, Grafana 4 og andre 62. Berre to klientar var aktive ved siste prøve. Eit release-backupoppdrag køyrde under kontrollen. Tala seier ikkje kor lenge presset varte eller om ein brukar fekk feil. [Lesande SQL for ny måling](../tools/capacity-postgres-budget.sql) ekskluderer sin eigen klient og viser berre faste grupper.
+
+| Eigarskap | Konfigurert ramme og overlapp |
+| --- | --- |
+| Chat-kjerne og drift | API-pool 4 i prod og 2 i canary, éin lyttar per replika. Tre normale API-poddar brukar høgst 13, samtidig konfigurert surge 21 før eventuelle terminerande poddar. Eiga Sprøyt-migrering treng opptil éin per jobb. |
+| Media og Heart | Media har éin arbeidar med pool 2. Heart køyrer no med Recreate i begge miljø og pool 2 på tre poddar. Den [isolert prøvde ramma](heart-rollout-budget.md) er 6 normalt, 8 med begge vedlikehaldsjobbane. Summen av kjende Sprøyt-runtimegrenser er 21 normalt. Summen med begge API-surge, media og Heart-vedlikehald er 31 før API-migrering, terminerande API-poddar og backup. |
+| Identitet, andre tenesteeigarar og infrastruktur | 15 av 16 innloggingsroller utan superbrukarrett hadde uavgrensa rolletak. Authentik-server og -arbeidar hadde éin replika kvar, 25 % surge og ingen CPU-/minnetak. Grafana brukar Recreate. Eit komponentspecifikt pooltak kan avgrense ein klient sjølv utan rolletak. Samla øvre grense for desse eigarane er uavklart. |
+| Infrastruktur og lagring | Tre noder hadde kvar fire allokerbare CPU og 8255904 KiB minne. Bruk ved ei prøve var 390–2374m CPU og 2757–4599 MiB per node. PostgreSQL brukte 155m / 567 MiB mot tak 500m / 1536 MiB. DB-volumet på 8 GiB hadde 4005876 KiB ledig. Ledig filplass er punktbruk. Nødvendig WAL-/backupreserve og I/O ved topp er enno uavklart. |
+| Backup og drift | Den daglege jobben kl. 03 har Forbid og ingen CPU-/minnetak. Forbid avgrensar berre overlapp innan den same CronJob-en. Dei deklarerte release-backupvoluma var 32 GiB i kvart miljø og eit ekstra 8 GiB-volum i canary. Storleik åleine viser ikkje ledig plass. |
+
+For å kunne halde av **åtte** ordinære plassar til samtidig API-surge frå normal drift (5 prod + 3 canary), må talet på andre og eksisterande klientar vere høgst **89** før surge, og lågare når migrering, terminering, backup, identitetsreserve eller andre nye klientar fell saman. Åtte er kostnaden ved nett denne operasjonen. Dei tre superbrukarplassane er ein separat reserve. Ved den siste prøva ville den skisserte auken mangle sju plassar før anna vedlikehald. Ingen slik utrulling eller lastprøve vart starta som del av målinga.
+
+**Ope for #353:** Infrastruktur og dei delte tenesteeigarane må fastsetje eigne maksimum og ordinær driftsreserve som kan haldast også ved utrulling. Godkjenning av dette samla budsjettet, inkludert lagring og backup, står att. Dei isolerte lastprøvene ovanfor dekkjer avgjerda om chatarkitekturen. [Driftsaksept #170](https://github.com/hbjoroy/sproyt/issues/170) står ved lag.
