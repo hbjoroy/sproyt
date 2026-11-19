@@ -13,7 +13,9 @@ use tokio::{
     time::Instant,
 };
 
-use super::RepositoryError;
+#[cfg(test)]
+use crate::domain::{PortableUserExport, RepositoryFuture};
+use crate::domain::{ProfileRepository, RepositoryError, User, UserId};
 
 pub const ACCOUNT_EXPORT_TIMEOUT: Duration = Duration::from_secs(120);
 const MAX_CHUNK_BYTES: usize = 1024 * 1024;
@@ -32,6 +34,83 @@ pub enum AccountExportError {
 
 pub type AccountExportFuture<'a> =
     Pin<Box<dyn Future<Output = Result<AccountExport, AccountExportError>> + Send + 'a>>;
+
+pub(crate) trait AccountExportRepository: Send + Sync + 'static {
+    fn start_user_export(
+        &self,
+        actor: UserId,
+        deadline: tokio::time::Instant,
+        permit: tokio::sync::OwnedSemaphorePermit,
+    ) -> AccountExportFuture<'_>;
+    #[cfg(test)]
+    fn export_user_data(&self, actor: UserId) -> RepositoryFuture<'_, PortableUserExport> {
+        Box::pin(async move {
+            use futures_util::{TryStreamExt, pin_mut};
+            let permit = std::sync::Arc::new(tokio::sync::Semaphore::new(1))
+                .try_acquire_owned()
+                .expect("test export permit");
+            let export = self
+                .start_user_export(
+                    actor,
+                    tokio::time::Instant::now() + ACCOUNT_EXPORT_TIMEOUT,
+                    permit,
+                )
+                .await
+                .map_err(|error| RepositoryError::Storage(error.to_string()))?;
+            let stream = export.into_stream();
+            pin_mut!(stream);
+            let mut bytes = Vec::new();
+            while let Some(chunk) = stream
+                .try_next()
+                .await
+                .map_err(|error| RepositoryError::Storage(error.to_string()))?
+            {
+                bytes.extend(chunk);
+            }
+            serde_json::from_slice(&bytes)
+                .map_err(|error| RepositoryError::Storage(error.to_string()))
+        })
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct AccountDataService {
+    profiles: Arc<dyn ProfileRepository>,
+    exports: Arc<dyn AccountExportRepository>,
+    export_slot: Arc<tokio::sync::Semaphore>,
+}
+
+impl AccountDataService {
+    pub(crate) fn new(
+        profiles: Arc<dyn ProfileRepository>,
+        exports: Arc<dyn AccountExportRepository>,
+    ) -> Self {
+        Self {
+            profiles,
+            exports,
+            export_slot: Arc::new(tokio::sync::Semaphore::new(1)),
+        }
+    }
+
+    pub(crate) async fn start_user_export(
+        &self,
+        user: User,
+    ) -> Result<AccountExport, AccountExportError> {
+        let permit = self
+            .export_slot
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| AccountExportError::Busy)?;
+        let deadline = tokio::time::Instant::now() + ACCOUNT_EXPORT_TIMEOUT;
+        let actor = user.id.clone();
+        tokio::time::timeout_at(deadline, self.profiles.upsert_user(user))
+            .await
+            .map_err(|_| AccountExportError::Timeout)??;
+        self.exports
+            .start_user_export(actor, deadline, permit)
+            .await
+    }
+}
 
 pub struct AccountExport {
     chunks: Arc<Mutex<mpsc::Receiver<Vec<u8>>>>,
@@ -138,6 +217,23 @@ mod tests {
     use tokio::sync::Semaphore;
 
     use super::*;
+
+    #[test]
+    fn export_path_is_independent_of_chat() {
+        let service = include_str!("account_data.rs");
+        let (service, _) = service.split_once("mod tests {").unwrap();
+        let handler = include_str!("web/account_export.rs");
+        for source in [service, handler] {
+            assert!(!source.contains("ChatEngine"));
+            assert!(!source.contains("ChatRepository"));
+            assert!(
+                !source
+                    .split_whitespace()
+                    .collect::<String>()
+                    .contains("state.chat")
+            );
+        }
+    }
 
     #[tokio::test]
     async fn unpolled_export_discards_its_queued_tail_and_releases_admission_at_deadline() {

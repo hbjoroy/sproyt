@@ -1693,10 +1693,13 @@ async fn start_test_server_with_state(
     let chat_repository: Arc<dyn crate::domain::ChatRepository> = repository.clone();
     let process_repository: Arc<dyn ProcessRepository> = repository.clone();
     let agent_repository: Arc<dyn AgentRepository> = repository.clone();
+    let account_data =
+        crate::account_data::AccountDataService::new(repository.clone(), repository.clone());
     let integration_repository: Arc<dyn crate::integration::IntegrationRepository> = repository;
     let operations = OperationalState::default();
     operations.set_ready(true);
     let state = AppState {
+        account_data,
         topics: None,
         native_sessions: None,
         media_store: None,
@@ -1732,10 +1735,13 @@ async fn start_postgres_test_server(
     let chat_repository: Arc<dyn crate::domain::ChatRepository> = repository.clone();
     let process_repository: Arc<dyn ProcessRepository> = repository.clone();
     let agent_repository: Arc<dyn AgentRepository> = repository.clone();
+    let account_data =
+        crate::account_data::AccountDataService::new(repository.clone(), repository.clone());
     let integration_repository: Arc<dyn crate::integration::IntegrationRepository> = repository;
     let operations = OperationalState::default();
     operations.set_ready(true);
     let state = AppState {
+        account_data,
         topics: None,
         native_sessions: None,
         media_store: None,
@@ -1771,10 +1777,13 @@ async fn start_test_server_with_gateway(
     let chat_repository: Arc<dyn crate::domain::ChatRepository> = repository.clone();
     let process_repository: Arc<dyn ProcessRepository> = repository.clone();
     let agent_repository: Arc<dyn AgentRepository> = repository.clone();
+    let account_data =
+        crate::account_data::AccountDataService::new(repository.clone(), repository.clone());
     let integration_repository: Arc<dyn crate::integration::IntegrationRepository> = repository;
     let operations = OperationalState::default();
     operations.set_ready(true);
     let state = AppState {
+        account_data,
         topics: None,
         native_sessions: None,
         media_store: None,

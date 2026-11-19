@@ -860,6 +860,10 @@ mod tests {
             .await
             .unwrap();
         let state = AppState {
+            account_data: crate::account_data::AccountDataService::new(
+                repository.clone(),
+                repository.clone(),
+            ),
             topics: None,
             media_store: None,
             imagegen: None,

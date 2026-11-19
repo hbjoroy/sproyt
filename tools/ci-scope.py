@@ -44,7 +44,7 @@ RECOVERY_TOOLS = {'tools/seed-media-recovery.sql', 'tools/verify-media-recovery.
                   'tools/reset-agent-memory-after-restore.sql'}
 BACKEND_PREFIXES = ('src/', 'crates/', 'migrations/')
 BACKEND_FILES = {
-    'src/agent.rs', 'src/auth.rs', 'src/chat.rs', 'src/chatbot.rs', 'src/config.rs', 'src/enrollment.rs',
+    'src/account_data.rs', 'src/agent.rs', 'src/auth.rs', 'src/chat.rs', 'src/chatbot.rs', 'src/config.rs', 'src/enrollment.rs',
     'src/github.rs', 'src/imagegen.rs', 'src/imagegen_prompt.rs', 'src/integration.rs', 'src/main.rs',
     'src/media_store.rs', 'src/media_worker.rs', 'src/native_sessions.rs', 'src/notification.rs',
     'src/operations.rs', 'src/process.rs', 'src/process_pilot.rs', 'src/protocol.rs', 'src/release_news.rs', 'src/server.rs',
@@ -61,7 +61,7 @@ BOOTSTRAP = {'src/config.rs', 'src/main.rs', 'src/server.rs'}
 AUTH_SOURCES = BOOTSTRAP | {
     'src/agent.rs', 'src/auth.rs', 'src/chatbot/channel_access.rs', 'src/domain/onboarding.rs',
     'src/domain/policy.rs', 'src/enrollment.rs', 'src/native_sessions.rs', 'src/web/account.rs',
-    'src/web/agents.rs', 'src/web/auth.rs', 'src/web/browser.rs', 'src/web/enrollment.rs',
+    'src/web/account_export.rs', 'src/web/agents.rs', 'src/web/auth.rs', 'src/web/browser.rs', 'src/web/enrollment.rs',
     'src/web/http.rs', 'src/web/mcp.rs', 'src/web/native.rs', 'src/web/native_chat.rs',
     'src/web/socket.rs', 'src/web/stream.rs', 'src/ws.rs',
 }

@@ -144,17 +144,10 @@ impl SqliteChatRepository {
     }
 }
 
-impl ChatRepository for SqliteChatRepository {
-    fn health_check(&self) -> RepositoryFuture<'_, ()> {
-        Box::pin(async move {
-            sqlx::query_scalar::<_, i64>("select 1")
-                .fetch_one(&self.pool)
-                .await
-                .map_err(sql_error)
-                .map(|_| ())
-        })
-    }
-    fn upsert_user<'a>(&'a self, user: User) -> RepositoryFuture<'a, User> {
+use crate::{account_data::AccountExportRepository, domain::ProfileRepository};
+
+impl ProfileRepository for SqliteChatRepository {
+    fn upsert_user(&self, user: User) -> RepositoryFuture<'_, User> {
         Box::pin(async move {
             // Take the SQLite write reservation before checking a candidate
             // handle.  Deferred read transactions deadlock under parallel
@@ -243,6 +236,47 @@ impl ChatRepository for SqliteChatRepository {
                 .await
                 .map_err(sql_error)?;
             Ok(user)
+        })
+    }
+}
+
+impl AccountExportRepository for SqliteChatRepository {
+    fn start_user_export(
+        &self,
+        actor: UserId,
+        deadline: tokio::time::Instant,
+        permit: tokio::sync::OwnedSemaphorePermit,
+    ) -> crate::account_data::AccountExportFuture<'_> {
+        use crate::account_data::{AccountExport, AccountExportError};
+
+        Box::pin(async move {
+            // A rollback-journal snapshot can delay SQLite writes. Bound the
+            // local export to less than the configured five-second busy wait.
+            let deadline =
+                deadline.min(tokio::time::Instant::now() + std::time::Duration::from_secs(4));
+            let mut tx = tokio::time::timeout_at(deadline, self.pool.begin())
+                .await
+                .map_err(|_| AccountExportError::Timeout)?
+                .map_err(sql_error)?;
+            Ok(AccountExport::start(
+                deadline,
+                permit,
+                |writer| async move {
+                    super::account_export::write_account_export!(tx, false, actor, writer)
+                },
+            ))
+        })
+    }
+}
+
+impl ChatRepository for SqliteChatRepository {
+    fn health_check(&self) -> RepositoryFuture<'_, ()> {
+        Box::pin(async move {
+            sqlx::query_scalar::<_, i64>("select 1")
+                .fetch_one(&self.pool)
+                .await
+                .map_err(sql_error)
+                .map(|_| ())
         })
     }
 
@@ -989,33 +1023,6 @@ impl ChatRepository for SqliteChatRepository {
                 });
             }
             Ok(())
-        })
-    }
-
-    fn start_user_export(
-        &self,
-        actor: UserId,
-        deadline: tokio::time::Instant,
-        permit: tokio::sync::OwnedSemaphorePermit,
-    ) -> crate::domain::account_export::AccountExportFuture<'_> {
-        use crate::domain::account_export::{AccountExport, AccountExportError};
-
-        Box::pin(async move {
-            // A rollback-journal snapshot can delay SQLite writes. Bound the
-            // local export to less than the configured five-second busy wait.
-            let deadline =
-                deadline.min(tokio::time::Instant::now() + std::time::Duration::from_secs(4));
-            let mut tx = tokio::time::timeout_at(deadline, self.pool.begin())
-                .await
-                .map_err(|_| AccountExportError::Timeout)?
-                .map_err(sql_error)?;
-            Ok(AccountExport::start(
-                deadline,
-                permit,
-                |writer| async move {
-                    super::account_export::write_account_export!(tx, false, actor, writer)
-                },
-            ))
         })
     }
 

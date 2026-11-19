@@ -2,7 +2,7 @@
 
 Dato: 10. november 2026. Status: **framlegg til gjennomføringsplan**, ikkje implementert arkitektur eller godkjent driftsbudsjett. Utarbeidd med Astra etter dei avtalte arkitekturprinsippa frå 5. november.
 
-**Tilråding:** Start med avgrensa måling av database- og chatventing under #353. Avklar datalivsløp under #356 samstundes. Prøv deretter kontodataeksport som første vertikal under #355. Bruk målingane og leasekontrollen til å avgjere om push skal bli første nye sjølvstendige arbeidar under #354. Behald modulær monolitt, eksisterande database og eksisterande leveringskontraktar.
+**Tilråding:** Start med avgrensa måling av database- og chatventing under #353. Avklar datalivsløp under #356 samstundes. Skil ut kontodataeksport som første vertikal under #355. Bruk målingane og leasekontrollen til å avgjere om push skal bli første nye sjølvstendige arbeidar under #354. Behald modulær monolitt, eksisterande database og eksisterande leveringskontraktar.
 
 ## 1. Kjeldegrunnlag og kva som faktisk står att
 
@@ -45,7 +45,7 @@ Ein **kapabilitet** er ei evne eigd utanfor vertikalane, brukt gjennom ein kontr
 | Kapabilitet: varsling | Varsling/plattform | Chat og andre publiserande vertikalar: varig outbox, preferansar og avgrensa ekstern levering. Felles tilstand og implementasjon. |
 | Kapabilitet: modelltilgang | Modell/plattform | Agentdialog, minne, emne og bilegenerering: autorisert endepunkt, budsjett, timeout og admission per faktisk leverandør. Gjenbruk #231 og minnearbeidet. |
 
-Modelltilgang er førebels eit **ansvarskart**, ikkje påstand om at alle forbrukarar nyttar éin implementasjon. `topics/worker.rs` har eigen modellklient; agentdialog/minne har delt admission. Før kapasitet blir endra, må ein kartleggje om dei brukar same avgrensa modellressurs. LLM og ComfyUI skal ikkje få éin generell lås berre fordi begge er modellar.
+Modelltilgang har førebels fleire implementasjonar, og modell-/plattformrolla skal eige kontrakten på tvers av desse. `topics/worker.rs` har eigen modellklient; agentdialog/minne har delt admission. Før kapasitet blir endra, må ein kartleggje om dei brukar same avgrensa modellressurs. LLM og ComfyUI skal ikkje få éin generell lås berre fordi begge er modellar.
 
 Ingen ny lokal kapabilitetsimplementasjon er nødvendig i første etappe. Dersom rein formattering seinare blir implementert i fleire klientar, skal ein versjonert spesifikasjon og samsvarstestar styre åtferda. Autentisering, publiseringskontroll og tilstandsberande kvotar skal framleis ha autoritativ felles implementasjon.
 
@@ -109,19 +109,40 @@ Avgjerda frå B skal vere éi av: **behald** eksisterande form, **effektiviser**
 
 ## 5. Leveranse C – kontodata som første vertikal (#355)
 
-Dette er eit konkret forslag til modularitetsprøve, ikkje nytt eksportprodukt. Behovet er vidare datalivsløpsarbeid i #356 og nye dataområde. #351 har allereie gitt eit eigna lite skilje med eksporttypar og SQL-hjelparar. Alternativa er å halde alt i chat-kjernen, eller starte i agentdialog/minne; det første bevarer koplinga, det andre har større publiserings- og personvernrisiko.
+Kontodata er første vertikal fordi datalivsløpsarbeidet i #356 og nye
+dataområde kjem til å krevje endringar i eksporten. #351 gav ei avgrensa
+inngang med eksisterande eksporttypar, SQL-hjelparar og regresjonstestar.
+Ei utskiljing i agentdialog/minne ville ha gripe inn i meir samansette
+publiserings- og personvernreglar.
 
-Avhengnad: ansvarskartet i punkt 2 og ein kort gjennomgang av eksisterande eksportkontrakt. C kan gjerast uavhengig av endeleg workerval. Eigarroller: kontodata/personvern og vedlikehaldarane av chat/persistens.
+Konto/personvern eig eigeneksporten og formatet `sproyt.user-export.v1`, inkludert
+utvalet per autentisert brukar og kravet om eitt konsistent snapshot. Chat eig
+domenereglane for tilgang til kanalar og meldingar. Arrangement, agentminne,
+profil og kontoinnstillingar eig sine felt og reglar for kva dei kan bidra med.
+Bidraga blir lesne gjennom det eksisterande SQL-utvalet i same transaksjon.
+Eigarane av bidraga kan gjere endringar saman med kontodataeigaren, som har
+ansvar for kompatibilitet og eventuell utfasing av eksportformatet.
 
-- Innfør ei smal `AccountDataService` og ein `AccountExportRepository` (arbeidsnamn). Flytt eksportadmission og `start_user_export` frå `ChatEngine`, og eksportmetoden frå `ChatRepository`, utan å endre JSON, HTTP-feil, tidsgrenser, snapshot eller låsing.
-- La dei same PostgreSQL-/SQLite-adapterane implementere eksportkontrakten og bruke eksisterande SQL-eksport. Ikkje del transaksjonen i tenestekall, nye poolar eller per-vertikal snapshot; konsistent eksport krev framleis éi transaksjonsgrense.
-- Gjer eksisterande `upsert_user` før eksport til ein eksplisitt identitets-/profilavhengnad. Bevar feltvern og tidsfrist; ikkje gøym ein full `ChatRepository` bak det nye eksportgrensesnittet.
-- Komponer tenesta éin gong i `server.rs`/`AppState` og la eksisterande konto-adapter bruke henne. Alle klonar må dele same admission; eitt nytt semaforobjekt per førespurnad ville oppheve #351-grensa.
-- Flytt relevante testhjelparar og dokumenter eksportbidrag frå andre område. Dataeigaren bestemmer kva felt som høyrer med; kontodataeigaren eig snapshot-/formatkontrakten. Ingen dynamisk pluginregistrering er nødvendig.
+- `web/account_export.rs` brukar eksisterande HTTP-autentisering og sender
+  den autentiserte brukaren til `AccountDataService` i `account_data.rs`.
+- `ProfileRepository` deler profiloppretting med chat og vernar dei same felta.
+  Eksporttenesta handhevar éin lokal plass per prosess og éin felles tidsfrist
+  for profiloppretting og eksport. Alle klonar av tenesta deler plassen.
+- `AccountExportRepository` har berre eksportkontrakten. Dei eksisterande
+  databaseadapterane brukar same poolar og same SQL-snapshot. PostgreSQL brukar
+  framleis transaksjonslåsar for å avgrense eksport til éin per konto og to
+  per database på tvers av replikaene. Begge adapterane slepper transaksjonen
+  når klienten koplar frå.
+- Små endringar i tenesta eller reine eksportspørjingar vel Rust- og
+  PostgreSQL-kontrollane. Endringar i HTTP-adapteren held på tilgangs- og
+  nettlesarkontrollane. Endringar i delte adapterar og oppstart kan framleis
+  krevje brei regresjon. Testane dekkjer HTTP-format og skjerming, timeout,
+  fråkopling, opptaksgrense og snapshot. Ein avhengnadstest held
+  eksporttenesta og HTTP-adapteren utanfor chat-kjernen.
 
-**Akseptanse:** eksportvegen avheng ikkje lenger av `ChatEngine` eller eksportmetode på `ChatRepository`; wireformat og tilgang er identiske; SQLite/PostgreSQL-kontraktane for snapshot, timeout, disconnect og admission består. Gjenbruk #351 sine 4k/40k-målingar medan føresetnadene held. Ny lastprøve krev ei reell endring i ressursåtferd, ikkje berre flytta kode.
-
-Gjer modulgrensa etterprøvbar med ei lita import-/avhengnadssjekk. Oppdater CI-testkart for nye stiar; delte adapterfiler kan framleis krevje brei backendkontroll. Ingen lovnad om smal CI berre fordi ein fil er flytta. Frontend, innstillingar og kontosletting er uendra i denne leveransen. Tilbakeføring er kode-revert utan datamigrering.
+Tilbakeføring er kode-revert utan datamigrering. #351 sine 4k/40k-målingar
+gjeld den same SQL- og ressursåtferda. Ved endring i pool, transaksjon,
+låsing, strauming eller tidsgrense må relevant ressursåtferd prøvast på nytt.
 
 ## 6. Leveranse D – første sjølvstendige arbeidar (#354)
 

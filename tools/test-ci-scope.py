@@ -40,6 +40,18 @@ class ScopeTests(unittest.TestCase):
             self.assertEqual(ci_scope.scope(paths)['browser'], 'none')
             self.assertEqual(ci_scope.scope(paths)['recovery'], 'false')
 
+    def test_account_export_service_preserves_backend_snapshot_coverage(self):
+        result = ci_scope.scope(['src/account_data.rs', 'src/db/account_export.rs'])
+        self.assertEqual((result['backend'], result['postgres']), ('true', 'true'))
+        self.assertEqual(result['browser'], 'none')
+        for flag in ('auth', 'codec', 'recovery', 'operations'):
+            self.assertEqual(result[flag], 'false', flag)
+
+    def test_account_export_http_adapter_preserves_auth_checks(self):
+        result = ci_scope.scope(['src/web/account_export.rs'])
+        self.assertEqual((result['auth'], result['backend'], result['postgres']), ('true', 'true', 'true'))
+        self.assertEqual(result['browser'], 'full')
+
     def test_prompt_interpretation_runs_the_whole_rust_gate_without_unrelated_jobs(self):
         result = ci_scope.scope(['src/imagegen_prompt.rs'])
         self.assertEqual(result['browser'], 'none')
