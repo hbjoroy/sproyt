@@ -170,6 +170,10 @@ pg_restore --exit-on-error --no-owner --no-acl --dbname sproyt_restore sproyt.du
 DATABASE_URL=postgres://.../sproyt_restore sproyt migrate
 ```
 
+For a real recovery, complete the [privacy replay gate](privacy-restore-journal.md)
+while the restored database is still isolated from every application and worker.
+CI fixtures contain synthetic data and exercise recovery independently.
+
 Start the same immutable image used in production against the restored
 database. Verify readiness, circle/channel counts, the maximum sequence for a
 sample of channels, and that a test principal can reconnect and read history.

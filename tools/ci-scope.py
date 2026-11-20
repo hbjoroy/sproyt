@@ -29,7 +29,10 @@ IDENTITY = {'deploy/authentik/kustomization.yaml',
 OIDC_TOOLS = {'tools/verify-oidc-provider.sh', 'tools/test-oidc-provider-verifier.sh',
               'tools/fixtures/authentik-discovery.json'}
 OPERATOR_SQL = {'tools/account-privacy-preview.sql', 'tools/account-privacy-erase.sql', 'tools/capacity-postgres-budget.sql',
-                'tools/test-operator-sql.sh', 'helm/sproyt/files/capacity-admission.sql'}
+                'tools/test-operator-sql.sh', 'helm/sproyt/files/capacity-admission.sql',
+                'tools/test-privacy-restore.sh', 'tools/privacy-restore-journal.sql',
+                'tools/privacy-restore-manifest.sql', 'tools/privacy-restore-revoke-native.sql',
+                'tools/replay-privacy-restore.py', 'tools/seed-privacy-restore.sql', 'tools/verify-privacy-restore.sql'}
 OPERATIONS_TOOLS = {'tools/verify-capacity-resources.py', 'tools/test-capacity-admission.sh', 'helm/sproyt/files/capacity-admission.sh',
                     'helm/sproyt/templates/capacity-admission.yaml', 'tools/verify-production-rollout.sh', 'tools/test-production-rollout-verifier.sh',
                     'tools/publish-production-release-news.sh',
