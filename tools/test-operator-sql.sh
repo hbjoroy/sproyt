@@ -102,3 +102,21 @@ awk -F'|' '
   { exit 1 }
   END { if (grouped != clients || !seen["other"] || !role_summary) exit 1 }
 ' <<<"$capacity"
+
+# Replay aggregate load in temporary rows on the isolated CI fixture. PostgreSQL
+# supplies the actual reserved-slot settings. The published admission query is unmodified.
+for case in '40 10 1' '41 10 0' '37 13 1' '38 13 0' '48 2 1' '49 2 0'; do
+  read -r other extra expect <<<"$case"
+  actual=$("${psql[@]}" -v other="$other" -v extra="$extra" <<'SQL'
+SET search_path = pg_temp, pg_catalog;
+CREATE TEMP TABLE pg_stat_activity (pid int, datname text, backend_type text, datid oid, usesysid oid);
+INSERT INTO pg_stat_activity
+SELECT 0, name, NULL, 1, 1
+FROM (VALUES ('sproyt',3),('heart_sproyt_canary',1),('authentik',4),('grafana',10),('other',:other)) s(name,n)
+CROSS JOIN LATERAL generate_series(1,n);
+INSERT INTO pg_stat_activity VALUES (pg_backend_pid(),'observer','client backend',1,1), (0,'ignored',NULL,NULL,NULL);
+\i helm/sproyt/files/capacity-admission.sql
+SQL
+  )
+  [[ ${actual##*|} == "$expect" ]]
+done
