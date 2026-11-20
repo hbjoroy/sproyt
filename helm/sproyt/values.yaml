@@ -138,6 +138,7 @@ heart:
   databasePodSelector: {}
 
 secret:
+  blockedAccountsExistingSecret: ""
   channelTopicsExistingSecret: ""
   channelTopicsApiKeyKey: api-key
   vllmExistingSecret: ""

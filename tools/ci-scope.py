@@ -28,7 +28,7 @@ IDENTITY = {'deploy/authentik/kustomization.yaml',
             'tools/verify-signup-recovery-runtime.py'}
 OIDC_TOOLS = {'tools/verify-oidc-provider.sh', 'tools/test-oidc-provider-verifier.sh',
               'tools/fixtures/authentik-discovery.json'}
-OPERATOR_SQL = {'tools/account-privacy-preview.sql', 'tools/capacity-postgres-budget.sql',
+OPERATOR_SQL = {'tools/account-privacy-preview.sql', 'tools/account-privacy-erase.sql', 'tools/capacity-postgres-budget.sql',
                 'tools/test-operator-sql.sh'}
 OPERATIONS_TOOLS = {'tools/verify-production-rollout.sh', 'tools/test-production-rollout-verifier.sh',
                     'tools/publish-production-release-news.sh',

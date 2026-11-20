@@ -46,6 +46,13 @@ spec:
             - configMapRef:
                 name: {{ include "sproyt.fullname" . }}
           env:
+            {{- if .Values.secret.blockedAccountsExistingSecret }}
+            - name: SPROYT_BLOCKED_ACCOUNT_IDS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secret.blockedAccountsExistingSecret }}
+                  key: blocked-account-ids
+            {{- end }}
             {{- if .Values.secret.channelTopicsExistingSecret }}
             - name: SPROYT_CHANNEL_TOPICS_MODEL_API_KEY
               valueFrom:
