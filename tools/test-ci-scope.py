@@ -85,7 +85,7 @@ class ScopeTests(unittest.TestCase):
                          ('true', 'true', 'false', 'false'))
 
     def test_operator_queries_use_postgres_contract(self):
-        for path in ('tools/account-privacy-preview.sql', 'tools/capacity-postgres-budget.sql',
+        for path in ('tools/account-privacy-preview.sql', 'tools/account-privacy-erase.sql', 'tools/capacity-postgres-budget.sql',
                      'tools/test-operator-sql.sh'):
             with self.subTest(path=path):
                 result = ci_scope.scope([path])

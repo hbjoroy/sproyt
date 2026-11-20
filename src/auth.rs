@@ -1,6 +1,7 @@
 use std::{
+    collections::HashSet,
     fmt,
-    sync::{Arc, RwLock},
+    sync::{Arc, OnceLock, RwLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -651,6 +652,7 @@ impl OidcService {
                     refresh_token,
                 )
             };
+        check_account(&issuer, &subject)?;
         // A provider may legitimately omit a refresh token even when
         // `offline_access` was requested. The sealed session remains valid
         // until its bounded expiry, so this is not an authentication failure.
@@ -754,6 +756,7 @@ fn validate_session_claims(claims: &SessionClaims, issuer: &str) -> Result<(), A
     if claims.expires_at <= now_seconds() || claims.issuer != issuer {
         return Err(AuthError::Unauthorized);
     }
+    check_account(&claims.issuer, &claims.subject)?;
     Ok(())
 }
 
@@ -824,6 +827,31 @@ fn decode_cookie_key(encoded_key: &str) -> Result<Aes256Gcm, AuthError> {
     Aes256Gcm::new_from_slice(&key).map_err(|_| AuthError::InvalidSessionKey)
 }
 
+// Read the operator list once per process. A rollout deliberately drains already-open
+// transports and applies the same list to both production and canary.
+pub(crate) fn blocked_accounts() -> Result<&'static HashSet<uuid::Uuid>, AuthError> {
+    static BLOCKED: OnceLock<Result<HashSet<uuid::Uuid>, ()>> = OnceLock::new();
+    BLOCKED
+        .get_or_init(|| match std::env::var("SPROYT_BLOCKED_ACCOUNT_IDS") {
+            Ok(value) if !value.trim().is_empty() => value
+                .split(',')
+                .map(|id| uuid::Uuid::parse_str(id.trim()).map_err(|_| ()))
+                .collect(),
+            Ok(_) | Err(std::env::VarError::NotPresent) => Ok(HashSet::new()),
+            Err(_) => Err(()),
+        })
+        .as_ref()
+        .map_err(|_| AuthError::Unsupported("invalid blocked-account configuration".into()))
+}
+
+fn check_account(issuer: &str, subject: &str) -> Result<UserId, AuthError> {
+    let id = UserId::from_oidc(issuer, subject);
+    if blocked_accounts()?.contains(id.as_uuid()) {
+        return Err(AuthError::Unauthorized);
+    }
+    Ok(id)
+}
+
 fn principal(
     issuer: &str,
     subject: &str,
@@ -833,7 +861,7 @@ fn principal(
 ) -> Result<AuthenticatedPrincipal, AuthError> {
     Ok(AuthenticatedPrincipal {
         user: User {
-            id: UserId::from_oidc(issuer, subject),
+            id: check_account(issuer, subject)?,
             kind: PrincipalKind::Human,
             display_name: DisplayName::new(display_name)?,
             handle: preferred_username.map(Handle::from_external),

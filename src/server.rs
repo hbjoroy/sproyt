@@ -121,6 +121,7 @@ pub(super) async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>
         return Ok(());
     }
     let config = AppConfig::from_env()?;
+    crate::auth::blocked_accounts()?;
     init_tracing(config.log_format())?;
     let address = config.bind_address();
     let operations = OperationalState::default();
