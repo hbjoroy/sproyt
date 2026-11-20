@@ -382,6 +382,12 @@ jobs:
           PGUSER: sproyt
         run: bash tools/test-operator-sql.sh
 
+      - name: Verify privacy replay after synthetic backup and restore
+        env:
+          PGHOST: 127.0.0.1
+          PGUSER: sproyt
+        run: bash tools/test-privacy-restore.sh
+
       - name: Measure synthetic memory backup footprint
         run: |
           client_image='postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193'
