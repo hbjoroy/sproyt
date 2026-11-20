@@ -35,8 +35,8 @@ eit verifisert, tilgangsstyrt mål utanfor klynga.
 - Behald ei plikt så lenge ei gjenopprettbar eldre kopi, PITR-intervall
   eller klone kan innehalde den råka tilstanden. Drift og produkt/personvern
   stadfestar at alle slike kopiar er ute av omløp før administrativ sletting
-  av journalrader. I same transaksjon må drift flytte dekningsgrensa forbi
-  den siste fjerna plikta. Uavklarte eller eldre kopiar forlengjer vernet.
+  av ei samanhengande eldste radrekkje. I same transaksjon flyttar drift
+  dekningsgrensa forbi den siste fjerna plikta og aldri forbi ei bevart rad. Uavklarte eller eldre kopiar forlengjer vernet.
   Journalen har inga automatisk sletting.
 
 Dekninga byrjar 20. november 2026 kl. 05:18:30 UTC. Ein backup med eldre
@@ -99,6 +99,9 @@ drift gjenreise og verifisere kjelda før trafikk kjem tilbake.
    sperrer.
 
 ## Prøve 20. november 2026
+
+Den målretta PostgreSQL-jobben køyrer same kontroll på syntetiske data.
+[CI-prøve](../tools/test-privacy-restore.sh)
 
 To lokale PostgreSQL 18.6-containerar utan nettverk heldt journal og
 syntetiske applikasjonsdata kvar for seg. Applikasjonstabellane låg i
