@@ -6,6 +6,8 @@ least-privileged agent users.
 The service is container-first. SQLite keeps local development light, while
 PostgreSQL is the production persistence and cross-replica fan-out contract.
 
+[Personvern, sletting og privat kontakt for Sprøyt-betaen](docs/beta-personvern.md)
+
 ## Current Status
 
 The repository contains the complete application path for durable private
