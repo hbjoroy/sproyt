@@ -1,0 +1,133 @@
+{{- if .Values.capacityAdmission.enabled }}
+{{- $name := printf "%s-capacity" (include "sproyt.fullname" .) }}
+{{- $pre := dict "argocd.argoproj.io/hook" "PreSync" "argocd.argoproj.io/sync-wave" "-19" "argocd.argoproj.io/hook-delete-policy" "BeforeHookCreation" }}
+{{- if or (not .Values.capacityAdmission.apiServerCidrs) (not (or (eq .Release.Namespace "sproyt") (eq .Release.Namespace "sproyt-canary"))) }}
+{{- fail "capacity admission requires a documented SprÃ¸yt namespace and explicit API server CIDRs" }}
+{{- end }}
+{{- $isProd := eq .Release.Namespace "sproyt" }}
+{{- if or (not .Values.heart.enabled) (ne (int .Values.heart.dbMaxConnections) 2) (ne (int .Values.heart.replicaCount) (ternary 2 1 $isProd)) (ne .Values.mediaWorker.enabled $isProd) }}
+{{- fail "recalculate the shared budget before changing Heart or media topology" }}
+{{- end }}
+{{- if or (ne (int .Values.replicaCount) (ternary 2 1 $isProd)) (ne (int .Values.config.dbMaxConnections) (ternary 4 2 $isProd)) }}
+{{- fail "recalculate the shared capacity budget before changing web replicas or pool sizes" }}
+{{- end }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  annotations: {{- toYaml $pre | nindent 4 }}
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $name }}
+  annotations: {{- toYaml $pre | nindent 4 }}
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames: [{{ include "sproyt.fullname" . | quote }}]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}
+  annotations: {{- toYaml $pre | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $name }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $name }}
+  annotations: {{- toYaml $pre | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      sproyt.me/capacity-phase: web
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - to:
+      {{- range .Values.capacityAdmission.apiServerCidrs }}
+        - ipBlock: { cidr: {{ . | quote }} }
+      {{- end }}
+      ports:
+        - { protocol: TCP, port: 443 }
+        - { protocol: TCP, port: 6443 }
+{{- range $phase := list "maintenance" "web" }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $name }}-{{ $phase }}
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/sync-wave: {{ ternary "-15" "-1" (eq $phase "maintenance") | quote }}
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 90
+  podReplacementPolicy: Failed
+  template:
+    metadata:
+      labels:
+        # Reuse the existing DNS and PostgreSQL egress allowlist for release jobs.
+        app.kubernetes.io/name: sproyt-release-backup
+        sproyt.me/capacity-phase: {{ $phase }}
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ $name }}
+      automountServiceAccountToken: {{ eq $phase "web" }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: check
+          image: {{ $.Values.capacityAdmission.image | quote }}
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              cat > /tmp/admission.sql <<'SQL'
+              {{- $.Files.Get "files/capacity-admission.sql" | trim | nindent 14 }}
+              SQL
+              {{- $.Files.Get "files/capacity-admission.sh" | trim | nindent 14 }}
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Values.secret.existingSecret }}
+                  key: {{ $.Values.secret.databaseUrlKey }}
+            - { name: PGCONNECT_TIMEOUT, value: "5" }
+            - { name: PGOPTIONS, value: "-c default_transaction_read_only=on -c statement_timeout=5s" }
+            - { name: PHASE, value: {{ $phase | quote }} }
+            - { name: NAMESPACE, value: {{ $.Release.Namespace | quote }} }
+            - { name: WEB_NAME, value: {{ include "sproyt.fullname" $ | quote }} }
+            - { name: WEB_REVISION, value: {{ include "sproyt.webSpec" $ | sha256sum | trunc 40 | quote }} }
+            - { name: WEB_IMAGE, value: {{ include "sproyt.image" $ | quote }} }
+            - { name: WEB_REPLICAS, value: {{ $.Values.replicaCount | quote }} }
+            - { name: WEB_OVERLAP, value: {{ ternary "13" "4" $isProd | quote }} }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {cpu: 100m, memory: 64Mi}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: tmp
+          emptyDir: {sizeLimit: 1Mi}
+{{- end }}
+{{- end }}

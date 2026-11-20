@@ -9,6 +9,9 @@ metadata:
     helm.sh/hook-weight: "-5"
     helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
 spec:
+  {{- if .Values.capacityAdmission.enabled }}
+  podReplacementPolicy: Failed
+  {{- end }}
   backoffLimit: 3
   ttlSecondsAfterFinished: 300
   template:
