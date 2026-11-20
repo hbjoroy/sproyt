@@ -1795,24 +1795,74 @@ impl ChatRepository for InMemoryChatRepository {
                 return Err(RepositoryError::NotFound);
             }
 
+            let membership = if let Some(circle_id) = stored.invitation.circle_id.clone() {
+                let existing = state
+                    .channels
+                    .values()
+                    .filter(|channel| {
+                        channel.circle_id.as_ref() == Some(&circle_id)
+                            && channel.name.as_str().eq_ignore_ascii_case("Prat")
+                    })
+                    .min_by_key(|channel| channel.id.to_string())
+                    .map(|channel| channel.id.clone());
+                let channel_id = if let Some(id) = existing {
+                    id
+                } else {
+                    let slug = ChannelSlug::new(format!(
+                        "{}-prat",
+                        circle_id.to_string().replace('-', "")
+                    ))
+                    .expect("valid circle channel slug");
+                    if state.channels_by_slug.contains_key(&slug) {
+                        return Err(RepositoryError::Conflict);
+                    }
+                    let id = ChannelId::generate();
+                    state.channels_by_slug.insert(slug.clone(), id.clone());
+                    state.channels.insert(
+                        id.clone(),
+                        Channel {
+                            id: id.clone(),
+                            slug,
+                            name: DisplayName::new("Prat").expect("valid name"),
+                            kind: ChannelKind::Private,
+                            circle_id: Some(circle_id.clone()),
+                            created_by: command.actor.clone(),
+                        },
+                    );
+                    id
+                };
+                state
+                    .memberships
+                    .entry((channel_id.clone(), command.actor.clone()))
+                    .or_insert_with(|| Membership {
+                        channel_id,
+                        user_id: command.actor.clone(),
+                        role: MembershipRole::Member,
+                        last_read_sequence: ChannelSequence::new(0),
+                    });
+                let joined_at = Utc::now();
+                let membership = CircleMembership {
+                    circle_id: circle_id.clone(),
+                    user_id: command.actor.clone(),
+                    role: CircleRole::Member,
+                    joined_at,
+                };
+                let membership = state
+                    .circle_memberships
+                    .entry((circle_id, command.actor.clone()))
+                    .or_insert(membership)
+                    .clone();
+                Some(membership)
+            } else {
+                None
+            };
+            let stored = state
+                .enrollment_invitations
+                .get_mut(&enrollment_token_hash(&command.token))
+                .expect("checked under state lock");
             stored.invitation.state = EnrollmentInvitationState::Consumed;
-            stored.consumed_by = Some(command.actor.clone());
-            let Some(circle_id) = stored.invitation.circle_id.clone() else {
-                return Ok(None);
-            };
-            let joined_at = Utc::now();
-            let membership = CircleMembership {
-                circle_id: circle_id.clone(),
-                user_id: command.actor.clone(),
-                role: CircleRole::Member,
-                joined_at,
-            };
-            let membership = state
-                .circle_memberships
-                .entry((circle_id, command.actor))
-                .or_insert(membership)
-                .clone();
-            Ok(Some(membership))
+            stored.consumed_by = Some(command.actor);
+            Ok(membership)
         })
     }
 

@@ -1544,6 +1544,14 @@ impl ChatRepository for PostgresChatRepository {
                     .execute(&mut *transaction)
                     .await
                     .map_err(sql_error)?;
+                let channel_id =
+                    circle_prat_id(&mut transaction, circle_id, *command.actor.as_uuid()).await?;
+                sqlx::query("insert into channel_memberships(channel_id,user_id,role) values($1,$2,'member') on conflict(channel_id,user_id) do nothing")
+                    .bind(channel_id)
+                    .bind(*command.actor.as_uuid())
+                    .execute(&mut *transaction)
+                    .await
+                    .map_err(sql_error)?;
                 let row = sqlx::query("select role,joined_at from circle_memberships where circle_id=$1 and user_id=$2")
                     .bind(circle_id)
                     .bind(*command.actor.as_uuid())
@@ -1651,10 +1659,7 @@ impl ChatRepository for PostgresChatRepository {
             let channel_id = match &preview.target {
                 InvitationTarget::Circle { circle_id } => {
                     sqlx::query("insert into circle_memberships(circle_id,user_id,role) values($1,$2,'member') on conflict(circle_id,user_id) do nothing").bind(*circle_id.as_uuid()).bind(*command.actor.as_uuid()).execute(&mut *tx).await.map_err(sql_error)?;
-                    if let Some(id)=sqlx::query_scalar::<_,Uuid>("select id from channels where circle_id=$1 and lower(name)='prat' order by id limit 1").bind(*circle_id.as_uuid()).fetch_optional(&mut *tx).await.map_err(sql_error)? { id } else {
-                        let id=Uuid::new_v4(); let slug=format!("{}-prat",circle_id.to_string().replace('-',""));
-                        sqlx::query("insert into channels(id,slug,name,kind,circle_id,created_by) values($1,$2,'Prat','private',$3,$4)").bind(id).bind(slug).bind(*circle_id.as_uuid()).bind(*command.actor.as_uuid()).execute(&mut *tx).await.map_err(sql_error)?; id
-                    }
+                    circle_prat_id(&mut tx, *circle_id.as_uuid(), *command.actor.as_uuid()).await?
                 }
                 InvitationTarget::Channel {
                     circle_id,
@@ -3948,6 +3953,37 @@ fn channel_summary(row: PgRow) -> Result<ChannelSummary, RepositoryError> {
         last_read_sequence: ChannelSequence::try_from(last_read_sequence).map_err(storage)?,
         latest_sequence: ChannelSequence::try_from(latest_sequence).map_err(storage)?,
     })
+}
+
+async fn circle_prat_id(
+    connection: &mut sqlx::PgConnection,
+    circle_id: Uuid,
+    actor: Uuid,
+) -> Result<Uuid, RepositoryError> {
+    const LOOKUP: &str =
+        "select id from channels where circle_id=$1 and lower(name)='prat' order by id limit 1";
+    if let Some(id) = sqlx::query_scalar(LOOKUP)
+        .bind(circle_id)
+        .fetch_optional(&mut *connection)
+        .await
+        .map_err(sql_error)?
+    {
+        return Ok(id);
+    }
+    let slug = format!("{}-prat", circle_id.to_string().replace('-', ""));
+    sqlx::query("insert into channels(id,slug,name,kind,circle_id,created_by) values($1,$2,'Prat','private',$3,$4) on conflict(slug) do nothing")
+        .bind(Uuid::new_v4())
+        .bind(slug)
+        .bind(circle_id)
+        .bind(actor)
+        .execute(&mut *connection)
+        .await
+        .map_err(sql_error)?;
+    sqlx::query_scalar(LOOKUP)
+        .bind(circle_id)
+        .fetch_one(&mut *connection)
+        .await
+        .map_err(sql_error)
 }
 
 fn discoverable_channel_from_row(row: PgRow) -> Result<DiscoverableChannel, RepositoryError> {
