@@ -2126,6 +2126,22 @@ where
         .await
         .unwrap();
 
+    let mut initial_channels = Vec::new();
+    for (slug, name) in [("welcome", "Prat"), ("private", "Privat")] {
+        initial_channels.push(
+            repository
+                .create_channel(crate::domain::CreateChannel {
+                    actor: owner.clone(),
+                    slug: ChannelSlug::new(format!("{slug}-{suffix}")).unwrap(),
+                    name: DisplayName::new(name).unwrap(),
+                    kind: crate::domain::ChannelKind::Private,
+                    circle_id: Some(circle.id.clone()),
+                })
+                .await
+                .unwrap(),
+        );
+    }
+
     let ordinary = repository
         .create_circle_invitation(CreateCircleInvitation {
             actor: owner.clone(),
@@ -2245,6 +2261,22 @@ where
     assert_eq!(membership.circle_id, circle.id);
     assert_eq!(membership.user_id, invitee.clone());
     assert_eq!(membership.role, crate::domain::CircleRole::Member);
+
+    let visible = repository
+        .list_channels_for_user(invitee.clone())
+        .await
+        .unwrap();
+    assert!(visible.iter().any(|ch| ch.id == initial_channels[0].id));
+    assert!(!visible.iter().any(|ch| ch.id == initial_channels[1].id));
+    repository
+        .append_message(crate::domain::SendMessage {
+            actor: invitee.clone(),
+            channel_id: initial_channels[0].id.clone(),
+            parent_message_id: None,
+            body: crate::domain::MessageBody::new("Hei frå ein ny brukar").unwrap(),
+        })
+        .await
+        .unwrap();
 
     // An account already using Sprøyt can join another circle through enrollment.
     let second_circle = repository
