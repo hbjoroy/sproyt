@@ -20,6 +20,7 @@ AND pg_catalog.to_regclass(pg_catalog.format('%I.users', :'app_schema')) IS NOT 
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '120s';
 CREATE TEMP TABLE erase_subject(id uuid PRIMARY KEY, confirmed uuid NOT NULL) ON COMMIT DROP;
+CREATE TEMP TABLE erase_image_jobs(id text PRIMARY KEY) ON COMMIT DROP;
 INSERT INTO pg_temp.erase_subject VALUES (:'account_id'::uuid, :'confirmed_account_id'::uuid);
 DO $$
 DECLARE
@@ -53,8 +54,15 @@ BEGIN
         AND agent_id IN (SELECT agent_id FROM agent_profiles WHERE owner_id=target);
     -- Preserve published results shared with other people. Remove ownership of any
     -- generation payload being deleted below without removing the publication itself.
-    UPDATE agent_image_publications SET image_job_id=NULL WHERE image_job_id IN
-        (SELECT id FROM image_generation_jobs WHERE owner_id=target::text);
+    INSERT INTO pg_temp.erase_image_jobs
+        SELECT id FROM image_generation_jobs WHERE owner_id=target::text
+        UNION
+        SELECT image_job_id FROM agent_image_publications
+        WHERE image_job_id IS NOT NULL AND state IN ('pending','admitting','queued','publishing')
+          AND (source_message_id IN (SELECT id FROM messages WHERE sender_id=target)
+               OR agent_id IN (SELECT agent_id FROM agent_profiles WHERE owner_id=target));
+    UPDATE agent_image_publications SET image_job_id=NULL
+        WHERE image_job_id IN (SELECT id FROM pg_temp.erase_image_jobs);
     UPDATE agent_image_publications SET state='skipped',lease_token=NULL,leased_until=NULL
         WHERE state IN ('pending','admitting','queued','publishing') AND (source_message_id IN
         (SELECT id FROM messages WHERE sender_id=target) OR agent_id IN
@@ -67,7 +75,7 @@ BEGIN
         WHERE status IN ('pending','leased') AND (source_message_id IN
         (SELECT id FROM messages WHERE sender_id=target) OR agent_id IN
         (SELECT agent_id FROM agent_profiles WHERE owner_id=target));
-    DELETE FROM image_generation_jobs WHERE owner_id=target::text;
+    DELETE FROM image_generation_jobs WHERE id IN (SELECT id FROM pg_temp.erase_image_jobs);
     DELETE FROM agent_location_shares WHERE user_id=target;
     DELETE FROM agent_memory_notes WHERE id IN
         (SELECT note_id FROM agent_memory_note_participants WHERE user_id=target)
