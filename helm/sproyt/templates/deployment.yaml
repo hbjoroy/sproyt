@@ -4,6 +4,11 @@ metadata:
   name: {{ include "sproyt.fullname" . }}
   labels:
     {{- include "sproyt.labels" . | nindent 4 }}
+    {{- if .Values.capacityAdmission.enabled }}
+    sproyt.me/web-capacity-revision: {{ include "sproyt.webSpec" . | sha256sum | trunc 40 | quote }}
+    {{- end }}
+{{ include "sproyt.webSpec" . }}
+{{- define "sproyt.webSpec" -}}
 spec:
   replicas: {{ .Values.replicaCount }}
   strategy:
@@ -46,6 +51,13 @@ spec:
             - configMapRef:
                 name: {{ include "sproyt.fullname" . }}
           env:
+            {{- if .Values.secret.blockedAccountsExistingSecret }}
+            - name: SPROYT_BLOCKED_ACCOUNT_IDS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secret.blockedAccountsExistingSecret }}
+                  key: blocked-account-ids
+            {{- end }}
             {{- if .Values.secret.channelTopicsExistingSecret }}
             - name: SPROYT_CHANNEL_TOPICS_MODEL_API_KEY
               valueFrom:
@@ -193,3 +205,4 @@ spec:
             matchLabels:
               app.kubernetes.io/name: {{ include "sproyt.name" . }}
               app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}

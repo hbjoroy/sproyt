@@ -204,6 +204,7 @@ jobs:
           bash tools/test-production-rollout-verifier.sh
           node tools/test-mcp-load.mjs
           node --test tools/test-capacity-probe.mjs
+          bash tools/test-capacity-admission.sh
           python3 -m pip install -r tools/requirements-heart-rollout-tests.txt
           python3 tools/test-heart-rollout-budget.py
           node --check tools/heart-rollout-probe.mjs

@@ -269,9 +269,7 @@ The number is never included in public profiles or people lists; deleted
 accounts leave an anonymous historical slot so numbers are never reused.
 It deliberately excludes channels the user has not joined and other users'
 profile/identity-provider fields. Export is produced from one database snapshot
-so concurrent sends cannot create internally inconsistent cursors. These
-defaults still require an explicit product/privacy decision before public
-production.
+so concurrent sends cannot create internally inconsistent cursors. See the [current private beta decision](beta-personvern.md) for retention, recipient follow-up and the independent contact for account requests.
 
 Before each material traffic increase, load-test at two replicas with a
 production-sized PostgreSQL tier. Exercise concurrent sends to one hot channel,

@@ -1,4 +1,11 @@
 replicaCount: 2
+
+# Enable only for the two releases sharing the documented PostgreSQL envelope.
+capacityAdmission:
+  enabled: false
+  apiServerCidrs: []
+  # PostgreSQL 18 psql and curl from the same immutable release-backup client.
+  image: registry-1.docker.io/bitnami/postgresql@sha256:65d7506622ce2649914947b698d822d56c208295ba7ee80c1b34e48b251ba0c1
 terminationGracePeriodSeconds: 30
 
 image:
@@ -138,6 +145,7 @@ heart:
   databasePodSelector: {}
 
 secret:
+  blockedAccountsExistingSecret: ""
   channelTopicsExistingSecret: ""
   channelTopicsApiKeyKey: api-key
   vllmExistingSecret: ""
