@@ -67,7 +67,7 @@ for (const change of ["channel", "disabled", "account", "access"] as const) test
     await expect(f.composer).toBeEnabled(); await expect(f.context).toHaveCount(0);
     await f.app.getByRole("button", { name: "# Arrangementskanalen", exact: true }).click(); await expect(f.composer).toHaveValue("Privat utkast");
   } else if (change === "disabled") {
-    f.setEnabled(false); await expect(f.app.getByRole("tablist", { name: "Innhald i kanalen" })).toHaveCount(0); await expect(f.composer).toHaveValue("Privat utkast");
+    f.setEnabled(false); await expect(f.app.getByRole("tablist", { name: "Innhald i kanalen" }).getByRole("tab")).toHaveText(["Meldingar", "Arbeid"]); await expect(f.composer).toHaveValue("Privat utkast");
   } else if (change === "access") {
     f.revoke(); await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange"))); await expect(f.composer).toHaveValue("Privat utkast");
   } else {

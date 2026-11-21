@@ -1,5 +1,6 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
-import type { KeyboardEvent, ReactNode } from "react";
+import { navigateTabList } from "./tab-navigation";
+import type { ReactNode } from "react";
 import { Button, Status } from "@sproyt/ui/react";
 import { HttpError } from "../../api";
 import type { PersonalMessageReference, PersonalNote, PersonalSpaceApi } from "../../personal-space";
@@ -82,6 +83,8 @@ export interface PersonalSpaceLayout {
   readonly accountKey: string;
   readonly api: PersonalSpaceApi;
   readonly chatKey: string;
+  readonly work?: ReactNode;
+  readonly onWorkChange?: (open: boolean) => void;
 }
 
 export function PersonalSpacePanes({ space, active, chat }: {
@@ -93,12 +96,19 @@ export function PersonalSpacePanes({ space, active, chat }: {
   const notePane = useRef<HTMLDivElement>(null);
   const [wide, setWide] = useState(false);
   const chatKey = space?.chatKey;
-  const [selection, setSelection] = useState<{ chatKey: typeof chatKey; pane: "chat" | "note" | "expanded" }>({ chatKey, pane: "chat" });
+  const [selection, setSelection] = useState<{ chatKey: typeof chatKey; pane: "chat" | "note" | "expanded" | "work" }>({ chatKey, pane: "chat" });
   const pane = selection.chatKey === chatKey ? selection.pane : "chat";
   if (selection.chatKey !== chatKey) setSelection({ chatKey, pane });
   const compact = active && !wide;
   const expanded = active && wide && pane === "expanded";
-  const tab = pane === "chat" ? "chat" : "note";
+  const workOpen = active && pane === "work" && Boolean(space?.work);
+  const tab = workOpen ? "work" : wide || pane === "chat" ? "chat" : "note";
+  const onWorkChange = space?.onWorkChange;
+  useEffect(() => {
+    if (!workOpen) return;
+    onWorkChange?.(true);
+    return () => onWorkChange?.(false);
+  }, [workOpen, onWorkChange]);
 
   useLayoutEffect(() => {
     const element = container.current;
@@ -127,30 +137,24 @@ export function PersonalSpacePanes({ space, active, chat }: {
     return () => observer.disconnect();
   }, [active]);
 
-  function tabKey(event: KeyboardEvent<HTMLButtonElement>) {
-    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
-    event.preventDefault();
-    const next = event.key === "Home" ? "chat" : event.key === "End" ? "note" : tab === "chat" ? "note" : "chat";
-    setSelection({ chatKey, pane: next });
-    document.getElementById(`${id}-${next}-tab`)?.focus();
-  }
-
   return <>
     {!active && chat}
     <div className="sp-personal-panes" ref={container} hidden={!active}
-      data-personal-layout={active ? wide ? "wide" : "compact" : undefined} data-note-expanded={expanded || undefined}>
-      {compact && <div className="sp-product-nav-tabs sp-personal-tabs" role="tablist" aria-label="Området mitt">
-        {(["chat", "note"] as const).map(value => <button key={value} type="button" role="tab"
+      data-personal-layout={active ? wide ? "wide" : "compact" : undefined} data-note-expanded={expanded || undefined} data-work-open={workOpen || undefined}>
+      {active && (compact || space?.work) && <div className="sp-product-nav-tabs sp-personal-tabs" role="tablist" aria-label="Området mitt" onKeyDown={navigateTabList}>
+        {(["chat", "note", "work"] as const).filter(value => value === "chat" || (value === "note" ? compact : space?.work)).map(value => <button key={value} type="button" role="tab"
           id={`${id}-${value}-tab`} aria-selected={tab === value} aria-controls={`${id}-${value}-panel`}
-          tabIndex={tab === value ? 0 : -1} onKeyDown={tabKey} onClick={() => setSelection({ chatKey, pane: value })}>
-          {value === "chat" ? "Chatlogg" : "Notat"}
+          tabIndex={tab === value ? 0 : -1} onClick={() => setSelection({ chatKey, pane: value })}>
+          {value === "work" ? "Mine oppgåver" : value === "note" ? "Notat" : wide ? "Chatlogg og notat" : "Chatlogg"}
         </button>)}
       </div>}
-      {active && <div className="sp-personal-chat-pane" ref={chatPane} hidden={expanded || (compact && tab !== "chat")}
+      {active && space?.work && <div className="sp-work-tab-panel" hidden={!workOpen}
+        role="tabpanel" id={`${id}-work-panel`} aria-labelledby={`${id}-work-tab`}>{workOpen && space.work}</div>}
+      {active && <div className="sp-personal-chat-pane" ref={chatPane} hidden={workOpen || expanded || (compact && tab !== "chat")}
         role={compact ? "tabpanel" : undefined} id={`${id}-chat-panel`} aria-labelledby={compact ? `${id}-chat-tab` : undefined}>
         {chat}
       </div>}
-      <div className="sp-personal-note-pane" ref={notePane} hidden={compact && tab !== "note"}
+      <div className="sp-personal-note-pane" ref={notePane} hidden={workOpen || (compact && tab !== "note")}
         role={compact ? "tabpanel" : undefined} id={`${id}-note-panel`} aria-labelledby={compact ? `${id}-note-tab` : undefined}>
         {space && <PersonalNotePanel key={space.accountKey} active={active} api={space.api} owner={space.owner}
           expanded={expanded} onToggleExpanded={active && wide

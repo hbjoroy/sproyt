@@ -1,0 +1,120 @@
+.sp-channel-work {
+  inline-size: 100%;
+  max-inline-size: 860px;
+  box-sizing: border-box;
+  min-inline-size: 0;
+  padding: 12px clamp(12px, 4%, 32px) 24px;
+  overflow-wrap: anywhere;
+  container-type: inline-size;
+}
+.sp-channel-work > section + section {
+  margin-block-start: 24px;
+}
+.sp-channel-work-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0 12px;
+  padding-block-end: 6px;
+  border-block-end: 1px solid var(--sp-line);
+}
+.sp-channel-work-heading h2 {
+  margin: 0;
+  font-size: 1.125rem;
+}
+.sp-channel-work-filters {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0 8px;
+}
+.sp-channel-work-heading label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-block-size: 44px;
+}
+.sp-channel-work-tasks {
+  list-style: none;
+  padding: 0;
+  margin-block: 0 8px;
+}
+.sp-channel-work-task {
+  border-block-end: 1px solid var(--sp-line);
+}
+.sp-channel-work-task summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-content: center;
+  align-items: start;
+  gap: 2px 12px;
+  padding-block: 11px;
+  min-block-size: 44px;
+  box-sizing: border-box;
+  cursor: pointer;
+}
+.sp-channel-work-task summary::after {
+  content: "⌄";
+  grid-column: 2;
+  grid-row: 1;
+  color: var(--sp-muted);
+}
+.sp-channel-work-task[open] summary::after {
+  content: "⌃";
+}
+.sp-channel-work-task summary:focus-visible {
+  outline: 2px solid var(--sp-accent);
+  outline-offset: 2px;
+}
+.sp-channel-work-task summary small,
+.sp-channel-work-task-status,
+.sp-channel-work-definition small,
+.sp-channel-work .sp-circle-process-steps small {
+  font-size: 0.8125rem;
+  color: var(--sp-muted);
+}
+.sp-channel-work-task-body {
+  padding-block-end: 12px;
+}
+.sp-channel-work-task-body .sp-work-item-task,
+.sp-channel-work-task-body .sp-process-task {
+  margin: 0;
+}
+.sp-channel-work-task-body textarea,
+.sp-channel-work-task-body input,
+.sp-channel-work-task-body select {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  box-sizing: border-box;
+}
+.sp-channel-work-definition ul {
+  padding-inline-start: 20px;
+}
+.sp-channel-work-definition li {
+  margin-block: 8px;
+}
+.sp-channel-work-definition small,
+.sp-channel-work .sp-circle-process-steps small {
+  display: block;
+}
+.sp-channel-work-active {
+  margin-inline-start: 8px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+.sp-channel-work-heading + .sp-circle-process {
+  border-block-start: 0;
+}
+@media (pointer: coarse) {
+  .sp-channel-work button {
+    min-block-size: 44px;
+  }
+}
+
+.sp-channel-work-announcement:empty {
+  position: absolute;
+}
+.sp-channel-work-announcement:not(:empty) {
+  margin-block: 8px;
+}

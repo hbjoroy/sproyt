@@ -20,7 +20,11 @@ use uuid::Uuid;
 mod github_export;
 pub(crate) use github_export::{ExportCommand, ExportView};
 mod status_change;
+mod task_queue;
+
+const ASSIGNMENT_RIGHTS: &str = "((t.node_id='provide-information' and t.assignee_id=w.requested_by and t.channel_id=w.source_channel_id) or (t.node_id in ('review','followup-review','publish-github') and t.assignee_id=w.reviewer_id and t.channel_id=w.task_channel_id and exists(select 1 from application_processors p join application_process_roles r on r.application_id=p.application_id and r.user_id=p.user_id and r.process_role='product-handler' where p.application_id=w.application_id and p.user_id=t.assignee_id and p.can_review)))";
 pub(crate) use status_change::{StatusDecision, StatusStart};
+pub(crate) use task_queue::TaskQueueCursor;
 mod supplements;
 pub(crate) use supplements::SupplementCommand;
 
@@ -177,6 +181,10 @@ pub(crate) struct Decision {
 }
 
 impl WorkItems {
+    pub(crate) fn overview_connection(&self) -> Option<(&reqwest::Client, &str)> {
+        Some((&self.http, self.heart_url.as_deref()?))
+    }
+
     pub async fn from_env(
         config: &DatabaseConfig,
         pg: Option<&PgPool>,
@@ -289,7 +297,7 @@ impl WorkItems {
             let query = sql("select cast(t.id as text) as id,cast(t.message_id as text) as message_id,cast(w.id as text) as work_item_id,w.revision,w.definition_version,t.node_id,a.name as application_name,w.title,w.description,t.status,case when t.node_id='publish-github' then coalesce((select status from work_item_export_processes where work_item_id=w.id),'failed') else w.process_status end as process_status,t.delivery_status,case when t.node_id='provide-information' then null else coalesce(t.decision_category,w.category) end as decision_category,case when t.node_id='provide-information' then null else coalesce(t.decision_priority,w.priority) end as decision_priority,t.decision_status,u.display_name as assignee_name,cast(t.assignee_id as text) as assignee_id,(select decision_note from work_item_tasks where work_item_id=w.id and node_id='review' and decision_status='needs_information') as information_request,(select decision_note from work_item_tasks where work_item_id=w.id and node_id='provide-information') as information_response from work_item_tasks t join work_items w on w.id=t.work_item_id join work_applications a on a.id=w.application_id join users u on u.id=t.assignee_id join channel_memberships cm on cm.channel_id=t.channel_id and cm.user_id=?uuid where t.id=?uuid and t.message_id=?uuid",$pg);
             let row = sqlx::query(&query).bind(&actor).bind(&id).bind(&message).fetch_optional($pool).await.map_err(storage)?.ok_or(RepositoryError::NotFound)?;
             let assignee: String = row.try_get("assignee_id").map_err(storage)?;
-            let permission = sql("select 1 from work_item_tasks t join work_items w on w.id=t.work_item_id join channel_memberships cm on cm.channel_id=t.channel_id and cm.user_id=t.assignee_id and cm.role<>'observer' where t.id=?uuid and ((t.node_id='provide-information' and t.assignee_id=w.requested_by and t.channel_id=w.source_channel_id) or (t.node_id in ('review','followup-review','publish-github') and t.assignee_id=w.reviewer_id and t.channel_id=w.task_channel_id and exists(select 1 from application_processors p join application_process_roles r on r.application_id=p.application_id and r.user_id=p.user_id and r.process_role='product-handler' where p.application_id=w.application_id and p.user_id=t.assignee_id and p.can_review)))",$pg);
+            let permission = sql(&format!("select 1 from work_item_tasks t join work_items w on w.id=t.work_item_id join channel_memberships cm on cm.channel_id=t.channel_id and cm.user_id=t.assignee_id and cm.role<>'observer' where t.id=?uuid and {ASSIGNMENT_RIGHTS}"),$pg);
             let assigned_allowed: Option<i32> = sqlx::query_scalar(&permission).bind(&id).fetch_optional($pool).await.map_err(storage)?;
             let node: String = row.try_get("node_id").map_err(storage)?;
             let status: String = row.try_get("status").map_err(storage)?;
@@ -350,7 +358,7 @@ impl WorkItems {
         let message = command.message_id.to_string();
         macro_rules! save { ($pool:expr,$pg:expr) => {{
             let mut tx = $pool.begin().await.map_err(storage)?;
-            let rights = sql("select cast(w.id as text) as work_item_id,w.revision,w.process_status,w.definition_version,t.node_id,cast(t.assignee_id as text) as assignee_id,t.status,cast(t.decision_request_id as text) as decision_request_id,t.decision_revision,t.decision_note,t.decision_category,t.decision_priority,t.decision_status,cast(t.decision_supplement_id as text) as decision_supplement_id from work_item_tasks t join work_items w on w.id=t.work_item_id join channel_memberships cm on cm.channel_id=t.channel_id and cm.user_id=?uuid and cm.role<>'observer' where t.id=?uuid and t.message_id=?uuid and t.assignee_id=cm.user_id and ((t.node_id='provide-information' and t.assignee_id=w.requested_by and t.channel_id=w.source_channel_id) or (t.node_id in ('review','followup-review','publish-github') and t.assignee_id=w.reviewer_id and t.channel_id=w.task_channel_id and exists(select 1 from application_processors p join application_process_roles r on r.application_id=p.application_id and r.user_id=p.user_id and r.process_role='product-handler' where p.application_id=w.application_id and p.user_id=t.assignee_id and p.can_review)))",$pg);
+            let rights = sql(&format!("select cast(w.id as text) as work_item_id,w.revision,w.process_status,w.definition_version,t.node_id,cast(t.assignee_id as text) as assignee_id,t.status,cast(t.decision_request_id as text) as decision_request_id,t.decision_revision,t.decision_note,t.decision_category,t.decision_priority,t.decision_status,cast(t.decision_supplement_id as text) as decision_supplement_id from work_item_tasks t join work_items w on w.id=t.work_item_id join channel_memberships cm on cm.channel_id=t.channel_id and cm.user_id=?uuid and cm.role<>'observer' where t.id=?uuid and t.message_id=?uuid and t.assignee_id=cm.user_id and {ASSIGNMENT_RIGHTS}"),$pg);
             let row = sqlx::query(&rights).bind(&actor_string).bind(&id_string).bind(&message).fetch_optional(&mut *tx).await.map_err(storage)?.ok_or(RepositoryError::PermissionDenied)?;
             if row.try_get::<String,_>("assignee_id").map_err(storage)? != actor_string { return Err(RepositoryError::PermissionDenied); }
             let node: String = row.try_get("node_id").map_err(storage)?;
@@ -984,6 +992,7 @@ mod tests {
         let outsider = Uuid::now_v7();
         let circle = Uuid::now_v7();
         let channel = Uuid::now_v7();
+        let review_channel = Uuid::now_v7();
         let app = Uuid::now_v7();
         let binding = Uuid::now_v7();
         let route = Uuid::now_v7();
@@ -1010,9 +1019,15 @@ mod tests {
             .unwrap();
         sqlx::query("insert into channels(id,slug,name,kind,created_by,circle_id) values(?,?,'Issues','private',?,?)")
             .bind(channel.to_string()).bind(channel.to_string()).bind(owner.to_string()).bind(circle.to_string()).execute(&pool).await.unwrap();
-        for (user, role) in [(owner, "owner"), (reviewer, "member")] {
+        sqlx::query("insert into channels(id,slug,name,kind,created_by,circle_id) values(?,?,'Review queue','private',?,?)")
+            .bind(review_channel.to_string()).bind(review_channel.to_string()).bind(owner.to_string()).bind(circle.to_string()).execute(&pool).await.unwrap();
+        for (member_channel, user, role) in [
+            (channel, owner, "owner"),
+            (review_channel, owner, "owner"),
+            (review_channel, reviewer, "member"),
+        ] {
             sqlx::query("insert into channel_memberships(channel_id,user_id,role) values(?,?,?)")
-                .bind(channel.to_string())
+                .bind(member_channel.to_string())
                 .bind(user.to_string())
                 .bind(role)
                 .execute(&pool)
@@ -1044,7 +1059,7 @@ mod tests {
         sqlx::query("insert into application_process_roles(application_id,user_id,process_role) values(?,?,'product-handler')")
             .bind(app.to_string()).bind(reviewer.to_string()).execute(&pool).await.unwrap();
         sqlx::query("insert into channel_task_routes(id,binding_id,channel_id,task_key,process_role,enabled) values(?,?,?,'review','product-handler',1)")
-            .bind(route.to_string()).bind(binding.to_string()).bind(channel.to_string()).execute(&pool).await.unwrap();
+            .bind(route.to_string()).bind(binding.to_string()).bind(review_channel.to_string()).execute(&pool).await.unwrap();
         let service = WorkItems {
             store: Store::Sqlite(pool.clone()),
             heart_url: None,
@@ -1072,8 +1087,9 @@ mod tests {
             .draft(UserId::from_uuid(owner), channel, source)
             .await
             .unwrap();
-        sqlx::query("insert into channel_sequences(channel_id) values(?)")
+        sqlx::query("insert into channel_sequences(channel_id) values(?),(?)")
             .bind(channel.to_string())
+            .bind(review_channel.to_string())
             .execute(&pool)
             .await
             .unwrap();
@@ -1160,7 +1176,7 @@ mod tests {
             .project(
                 &first.id.to_string(),
                 &token.to_string(),
-                &channel.to_string(),
+                &review_channel.to_string(),
                 &heart_task,
             )
             .await
@@ -1171,7 +1187,7 @@ mod tests {
                 .project(
                     &first.id.to_string(),
                     &token.to_string(),
-                    &channel.to_string(),
+                    &review_channel.to_string(),
                     &heart_task
                 )
                 .await
@@ -1190,6 +1206,36 @@ mod tests {
             .await
             .unwrap();
         assert!(task.can_decide);
+        let page = service
+            .task_queue(UserId::from_uuid(reviewer), None, None, 1, None)
+            .await
+            .unwrap();
+        let page = serde_json::to_value(page).unwrap();
+        assert_eq!(page["next_cursor"], Value::Null);
+        assert_eq!(page["tasks"].as_array().unwrap().len(), 1);
+        let entry = &page["tasks"][0];
+        assert_eq!(entry["kind"], "work_item");
+        assert_eq!(entry["task"]["id"], heart_task.id.to_string());
+        assert_eq!(entry["task"]["message_id"], projected.to_string());
+        assert_eq!(entry["task"]["can_decide"], true);
+        assert_eq!(entry["channel_id"], review_channel.to_string());
+        assert_eq!(entry["channel_name"], "Review queue");
+        assert_eq!(entry["circle_id"], circle.to_string());
+
+        let after = format!("{projected}:work_item").parse().unwrap();
+        for (actor, channel, cursor) in [
+            (owner, None, None),
+            (outsider, None, None),
+            (reviewer, Some(Uuid::now_v7()), None),
+            (reviewer, Some(channel), None),
+            (reviewer, Some(review_channel), Some(after)),
+        ] {
+            let empty = service
+                .task_queue(UserId::from_uuid(actor), channel, cursor, 1, None)
+                .await
+                .unwrap();
+            assert_eq!(serde_json::to_value(empty).unwrap()["tasks"], json!([]));
+        }
         assert!(matches!(
             service
                 .task(UserId::from_uuid(outsider), heart_task.id, projected)
@@ -1234,6 +1280,17 @@ mod tests {
             .await
             .unwrap();
         assert!(blocked.blocked);
+        let hidden = service
+            .task_queue(
+                UserId::from_uuid(reviewer),
+                Some(review_channel),
+                None,
+                1,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(serde_json::to_value(hidden).unwrap()["tasks"], json!([]));
         assert!(
             !service
                 .task(UserId::from_uuid(reviewer), heart_task.id, projected)
@@ -1274,6 +1331,17 @@ mod tests {
             .unwrap();
         assert_eq!(accepted.delivery_status, "pending");
         assert!(!accepted.can_decide);
+        let hidden = service
+            .task_queue(
+                UserId::from_uuid(reviewer),
+                Some(review_channel),
+                None,
+                1,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(serde_json::to_value(hidden).unwrap()["tasks"], json!([]));
         assert_eq!(
             service
                 .decide(UserId::from_uuid(reviewer), heart_task.id, decision.clone())
@@ -1360,6 +1428,15 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(finalized, ("planned".into(), "bug".into(), "high".into()));
+        // The handoff exercise also checks what a source-channel member can read.
+        sqlx::query(
+            "insert into channel_memberships(channel_id,user_id,role) values(?,?,'member')",
+        )
+        .bind(channel.to_string())
+        .bind(reviewer.to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
         exercise_information_handoff(&service, owner, reviewer, channel, app, source).await;
         let mut changed = command.clone();
         changed.title = "Different".into();

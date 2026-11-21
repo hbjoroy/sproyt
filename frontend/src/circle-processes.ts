@@ -1,7 +1,12 @@
 import type { HttpClient } from "./api";
 import { isRecord } from "./types";
 
-export type ProcessStep = Readonly<{ name: string; status: string }>;
+export type ProcessStep = Readonly<{
+  name: string;
+  status: string;
+  node_id?: string | null;
+  task?: Readonly<{ channel_id: string; assignee_name: string }>;
+}>;
 export type ProcessHistory = ProcessStep & Readonly<{ occurred_at: string | null }>;
 export type CircleProcess = Readonly<{
   id: string; kind: string; title: string; channel_id: string; channel_name: string;
@@ -16,12 +21,17 @@ function text(value: unknown): string {
   if (typeof value !== "string" || !value || value.length > 4096) throw invalid();
   return value;
 }
+function decodeStep(step: unknown): ProcessStep {
+  if (!isRecord(step)) throw invalid();
+  const decoded = { name: text(step.name), status: text(step.status) };
+  const node = step.node_id === undefined ? {} : { node_id: step.node_id === null ? null : text(step.node_id) };
+  if (step.task == null) return { ...decoded, ...node };
+  if (!isRecord(step.task)) throw invalid();
+  return { ...decoded, ...node, task: { channel_id: text(step.task.channel_id), assignee_name: text(step.task.assignee_name) } };
+}
 function steps(value: unknown): ProcessStep[] {
   if (!Array.isArray(value) || value.length > 100) throw invalid();
-  return value.map(step => {
-    if (!isRecord(step)) throw invalid();
-    return { name: text(step.name), status: text(step.status) };
-  });
+  return value.map(decodeStep);
 }
 export function decodeCircleProcesses(value: unknown): CircleProcessPage {
   if (!isRecord(value) || !Array.isArray(value.processes) || value.processes.length > 50
@@ -36,7 +46,7 @@ export function decodeCircleProcesses(value: unknown): CircleProcessPage {
       steps_truncated: row.steps_truncated, history_truncated: row.history_truncated,
       history: row.history.map(event => {
         if (!isRecord(event) || (event.occurred_at !== null && typeof event.occurred_at !== "string")) throw invalid();
-        return { name: text(event.name), status: text(event.status), occurred_at: event.occurred_at as string | null };
+        return { ...decodeStep(event), occurred_at: event.occurred_at as string | null };
       }) };
   }) };
 }

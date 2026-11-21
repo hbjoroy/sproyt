@@ -1,5 +1,6 @@
 import { Button, Status } from "@sproyt/ui/react";
 import { useEffect, useRef, useState } from "react";
+import { HttpError } from "../../api";
 import type { PilotConfiguration, PilotTask, ProcessPilotApi } from "../../process-pilot";
 
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : "Kunne ikkje kontakte prosessen. Prøv igjen.";
@@ -58,8 +59,10 @@ export function ProcessTaskDetails({ task, busy, onComplete }: { task: PilotTask
   </div>;
 }
 
-export function ProcessTaskMessage({ api, taskId, messageId }: { api: ProcessPilotApi; taskId: string; messageId: string }) {
-  const root = useRef<HTMLDetailsElement>(null);
+export function ProcessTaskMessage({ api, taskId, messageId, inline = false, onCompleted, onActionAttempt }: {
+  api: ProcessPilotApi; taskId: string; messageId: string; inline?: boolean; onCompleted?: () => void; onActionAttempt?: () => void;
+}) {
+  const root = useRef<HTMLElement | null>(null);
   const [task, setTask] = useState<PilotTask>();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -68,6 +71,7 @@ export function ProcessTaskMessage({ api, taskId, messageId }: { api: ProcessPil
   const mounted = useRef(true);
   const mutation = useRef(false);
   const revision = useRef(0);
+  const awaitingConfirmation = inline && completionAttempted && task?.delivery_status === "pending";
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => {
     let disposed = false;
@@ -75,14 +79,19 @@ export function ProcessTaskMessage({ api, taskId, messageId }: { api: ProcessPil
     let timer: ReturnType<typeof setTimeout> | undefined;
     let inFlight: AbortController | undefined;
     const refresh = async () => {
-      if (disposed || !visible || document.hidden || inFlight || mutation.current) return;
+      if (disposed || (!visible && !awaitingConfirmation) || document.hidden || inFlight || mutation.current) return;
       const controller = new AbortController();
       const fetchedRevision = revision.current;
       inFlight = controller;
       try {
         const next = await api.task(taskId, messageId, controller.signal);
         if (!disposed && !mutation.current && fetchedRevision === revision.current) setTask(next);
-      } catch (error) { if (!disposed && !controller.signal.aborted) setError(errorMessage(error)); }
+      } catch (error) {
+        if (!disposed && !controller.signal.aborted && fetchedRevision === revision.current) {
+          if (inline && error instanceof HttpError && [401, 403, 404].includes(error.status)) setTask(undefined);
+          setError(errorMessage(error));
+        }
+      }
       finally {
         inFlight = undefined;
         if (!disposed) timer = setTimeout(() => void refresh(), 5_000);
@@ -91,16 +100,21 @@ export function ProcessTaskMessage({ api, taskId, messageId }: { api: ProcessPil
     const restart = () => { clearTimeout(timer); void refresh(); };
     const observer = typeof IntersectionObserver === "undefined" ? undefined : new IntersectionObserver(entries => {
       visible = entries.some(entry => entry.isIntersecting);
-      if (visible) restart(); else { clearTimeout(timer); inFlight?.abort(); }
+      if (visible || awaitingConfirmation) restart(); else { clearTimeout(timer); inFlight?.abort(); }
     });
     if (root.current) observer?.observe(root.current);
     document.addEventListener("visibilitychange", restart);
     void refresh();
     return () => { disposed = true; clearTimeout(timer); inFlight?.abort(); observer?.disconnect(); document.removeEventListener("visibilitychange", restart); };
-  }, [api, taskId, messageId, reload]);
+  }, [api, taskId, messageId, reload, inline, awaitingConfirmation]);
+  useEffect(() => {
+    if (task?.status === "completed" && task.delivery_status === "ready") onCompleted?.();
+  }, [task, onCompleted]);
+
   const complete = async () => {
     if (mutation.current || !task?.can_complete || task.status !== "pending" || task.delivery_status === "pending"
       || ["completed", "cancelled", "failed"].includes(task.process_status)) return;
+    onActionAttempt?.();
     mutation.current = true; revision.current++; setBusy(true); setCompletionAttempted(true); setError("");
     try {
       const updated = await api.complete(taskId, messageId);
@@ -116,11 +130,13 @@ export function ProcessTaskMessage({ api, taskId, messageId }: { api: ProcessPil
       : task?.status === "cancelled" || task?.process_status === "cancelled" ? "Avbroten" : task ? "Ventar" : error ? "Kunne ikkje hente status" : "Hentar status …";
   const reloadStatus = task?.status !== "pending" ? task?.status
     : ["completed", "cancelled", "failed"].includes(task.process_status) ? task.process_status : "pending";
-  return <details className="sp-process-task" ref={root} data-task-status={reloadStatus}
+  const Container = inline ? "div" : "details";
+  return <Container className="sp-process-task" ref={(element: HTMLElement | null) => { root.current = element; }} data-task-status={reloadStatus}
     data-app-update-recoverable={completionAttempted && !busy && api.canReload()}>
-    <summary>{task?.title ?? "Prosessoppgåve"}<span className="sp-process-task-status">{statusLabel}</span></summary>
+    {inline ? <span className="sp-process-task-status">{statusLabel}</span>
+      : <summary>{task?.title ?? "Prosessoppgåve"}<span className="sp-process-task-status">{statusLabel}</span></summary>}
     {task && <ProcessTaskDetails task={task} busy={busy} onComplete={() => void complete()} />}
     {error && <Status tone="error">{error}</Status>}
     <Button variant="quiet" disabled={busy} onClick={() => { setError(""); setReload(value => value + 1); }}>Hent status på nytt</Button>
-  </details>;
+  </Container>;
 }

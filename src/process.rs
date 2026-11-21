@@ -286,6 +286,7 @@ pub type SharedProcessRepository = Arc<dyn ProcessRepository>;
 #[derive(Clone)]
 pub struct ProcessService {
     repository: SharedProcessRepository,
+    overview: Option<(Client, String)>,
 }
 
 impl ProcessService {
@@ -296,7 +297,28 @@ impl ProcessService {
         if let Some(gateway) = gateway {
             tokio::spawn(run_outbox(repository.clone(), gateway));
         }
-        Self { repository }
+        Self {
+            repository,
+            overview: None,
+        }
+    }
+
+    pub(crate) fn with_overview_gateway(
+        mut self,
+        gateway: &HeartGateway,
+    ) -> Result<Self, ProcessError> {
+        let http = Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|_| ProcessError::unavailable("could not configure Heart overview client"))?;
+        self.overview = Some((http, gateway.base_url.clone()));
+        Ok(self)
+    }
+
+    pub(crate) fn overview_connection(&self) -> Option<(&Client, &str)> {
+        self.overview
+            .as_ref()
+            .map(|(client, base)| (client, base.as_str()))
     }
 
     pub async fn enqueue_start(

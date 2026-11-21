@@ -14,8 +14,8 @@ function safeIssueUrl(value: string | null | undefined): string | null {
   catch { return null; }
 }
 
-export function WorkItemTaskMessage({ api, taskId, messageId }: {
-  readonly api: WorkItemApi; readonly taskId: string; readonly messageId: string;
+export function WorkItemTaskMessage({ api, taskId, messageId, inline = false, onCompleted, onActionAttempt }: {
+  readonly api: WorkItemApi; readonly taskId: string; readonly messageId: string; readonly inline?: boolean; readonly onCompleted?: () => void; readonly onActionAttempt?: () => void;
 }) {
   const [task, setTask] = useState<WorkItemTask>();
   const baseline = useRef<WorkItemTask | undefined>(undefined);
@@ -24,7 +24,8 @@ export function WorkItemTaskMessage({ api, taskId, messageId }: {
   const [decisionRetry, setDecisionRetry] = useState<ReturnType<WorkItemApi["pendingDecision"]>>(null);
   const acceptTask = (value: WorkItemTask) => { observedRevision.current = Math.max(observedRevision.current, value.revision); baseline.current = value; setTask(value); setNewTask(undefined); };
   const [error, setError] = useState("");
-  const [expanded, setExpanded] = useState(false);
+  const [opened, setOpened] = useState(false);
+  const expanded = inline || opened;
   const [category, setCategory] = useState("bug");
   const [priority, setPriority] = useState("untriaged");
   const [decision, setDecision] = useState("planned");
@@ -80,13 +81,24 @@ export function WorkItemTaskMessage({ api, taskId, messageId }: {
         if (baseline.current?.status === "pending" && baseline.current.can_decide && value.revision !== baseline.current.revision) setNewTask(value);
         else acceptTask(value);
       } })
-      .catch(cause => { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : "Kunne ikkje lese oppgåva."); });
+      .catch(cause => {
+        if (controller.signal.aborted) return;
+        if (inline && cause instanceof HttpError && [401, 403, 404].includes(cause.status)) {
+          baseline.current = undefined; setTask(undefined); setNewTask(undefined);
+        }
+        setError(cause instanceof Error ? cause.message : "Kunne ikkje lese oppgåva.");
+      });
     refresh();
     const timer = window.setInterval(refresh, 5000);
     return () => { controller.abort(); window.clearInterval(timer); };
-  }, [api, taskId, messageId]);
+  }, [api, taskId, messageId, inline]);
+  const latestTask = newTask ?? task;
+  useEffect(() => {
+    if (latestTask?.status === "completed" && latestTask.delivery_status === "ready") onCompleted?.();
+  }, [latestTask, onCompleted]);
   const save = async () => {
     if (!task || saving || !task.can_decide && !decisionRetry || newTask && !decisionRetry) return;
+    onActionAttempt?.();
     setSaving(true); setError("");
     try { acceptTask(await api.decide(task, task.node_id === "provide-information" ? "" : category,
       task.node_id === "provide-information" ? "" : priority,
@@ -107,6 +119,7 @@ export function WorkItemTaskMessage({ api, taskId, messageId }: {
     const title = pending?.title ?? (send ? githubTitle : "");
     const body = pending?.body ?? (send ? githubBody : "");
     const actualSend = pending?.send ?? send;
+    onActionAttempt?.();
     setSaving(true); setError("");
     try {
       const result = await api.exportGithub(task, title, body, actualSend,
@@ -130,6 +143,7 @@ export function WorkItemTaskMessage({ api, taskId, messageId }: {
     const pending = statusRetry ?? api.pendingStatusChange(task);
     const actual = pending ?? { status: noChange ? "" : statusChoice, internal_note: noChange ? "" : internalNote,
       public_feedback: noChange ? "" : publicFeedback, no_change: noChange };
+    onActionAttempt?.();
     setSaving(true); setError("");
     try {
       acceptTask(await api.changeStatus(task, actual.status, actual.internal_note, actual.public_feedback, actual.no_change));
@@ -164,10 +178,10 @@ export function WorkItemTaskMessage({ api, taskId, messageId }: {
     : task.delivery_status === "pending" ? "Innsending lagra · ventar på Heart" : taskLabel;
   return <section className="sp-work-item-task" data-task-status={task.status}
     data-app-update-recoverable={Boolean(decisionRetry || githubRetry || statusRetry)} aria-label={`${taskLabel}: ${task.title}`}>
-    <Button className="sp-work-item-task-summary" variant="quiet" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>
+    {inline ? <p className="sp-channel-work-task-status">{state} · {task.assignee_name}</p> : <Button className="sp-work-item-task-summary" variant="quiet" aria-expanded={expanded} onClick={() => setOpened(value => !value)}>
       <span aria-hidden="true">{expanded ? "▾" : "▸"}</span>
       <span><strong>{task.title}</strong><small>{task.application_name} · {state} · {task.assignee_name}</small></span>
-    </Button>
+    </Button>}
     {newTask && !expanded && <Status>Ny informasjon i saka. Opne oppgåva og les gjennom før du sender ei avgjerd.</Status>}
     {expanded && <div className="sp-work-item-task-details">
     {task.status === "completed" && task.lifecycle?.can_start && <div className="sp-work-item-task-details">

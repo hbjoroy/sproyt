@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { navigateTabList } from "./tab-navigation";
 import { Button, Status } from "@sproyt/ui/react";
 import { HttpError } from "../../api";
 import { EventReferenceDiscovery, eventResponses, type ChannelEvent, type ChannelEventsApi, type EventCollectionSummary, type EventInput, type EventMessages, type EventPerson, type EventResponse } from "../../channel-events";
@@ -36,9 +37,9 @@ export function eventWhen(event: ChannelEvent) {
 }
 
 /** Both panes stay mounted: drafts, attachment state and timeline scroll survive tab switches. */
-export function ChannelEventSpace({ api, owner, channelId, enabled: channelEnabled, chat, composer, timeline, uploadImage, onTabChange }: Scope & {
+export function ChannelEventSpace({ api, owner, channelId, enabled: channelEnabled, work, chat, composer, timeline, uploadImage, onTabChange }: Scope & {
   enabled: boolean;
-  chat: ReactNode; composer?: ReactNode; timeline: TimelineProps; uploadImage(file: File, progress: (text: string) => void): Promise<string>;
+  work?: ReactNode; chat: ReactNode; composer?: ReactNode; timeline: TimelineProps; uploadImage(file: File, progress: (text: string) => void): Promise<string>;
   onTabChange?(events: boolean): void;
 }) {
   const bridge = useContext(EventBridgeContext);
@@ -56,7 +57,7 @@ export function ChannelEventSpace({ api, owner, channelId, enabled: channelEnabl
     return url.searchParams.get("channel") === channelId ? url.searchParams.get("event") : null;
   };
   const [selectedId, setSelectedId] = useState<string | null>(initial);
-  const [tab, setTab] = useState<"chat" | "events">(() => initial() ? "events" : "chat");
+  const [tab, setTab] = useState<"chat" | "events" | "work">(() => initial() ? "events" : "chat");
   const [events, setEvents] = useState<readonly ChannelEvent[]>([]);
   const eventsRef = useRef(events); eventsRef.current = events;
   const [attentionCount, setAttentionCount] = useState<number | null>(null);
@@ -89,7 +90,7 @@ export function ChannelEventSpace({ api, owner, channelId, enabled: channelEnabl
   useEffect(() => {
     if (previousEnabled.current && !enabled) {
       if (tab === "events" || filter || editing) setDisabledNotice(true);
-      setTab("chat"); setFilter(null); setEditing(null); setSelectedId(null); updateUrl(null);
+      setTab(current => current === "events" ? "chat" : current); setFilter(null); setEditing(null); setSelectedId(null); updateUrl(null);
       setAfter(null); setNextAfter(null); setEvents([]); setSummary(null); setAttentionCount(null); setSummaryError(false); setLoaded(false); setError("");
       if (document.activeElement === document.body) requestAnimationFrame(() => root.current?.querySelector<HTMLTextAreaElement>(".sp-composer textarea")?.focus({ preventScroll: true }));
     }
@@ -135,7 +136,7 @@ export function ChannelEventSpace({ api, owner, channelId, enabled: channelEnabl
     window.addEventListener("focus", refresh);
     return () => { clearInterval(timer); controller?.abort(); document.removeEventListener("visibilitychange", refresh); window.removeEventListener("focus", refresh); };
   }, [api, owner, channelId, after, channelEnabled]);
-  useEffect(() => { onTabChange?.(tab === "events"); return () => onTabChange?.(false); }, [tab]);
+  useEffect(() => { onTabChange?.(tab !== "chat"); return () => onTabChange?.(false); }, [tab]);
   useEffect(() => {
     const pop = () => { const event = initial(); setSelectedId(event); setTab(event ? "events" : "chat"); setEditing(null); };
     window.addEventListener("popstate", pop); return () => window.removeEventListener("popstate", pop);
@@ -179,18 +180,18 @@ export function ChannelEventSpace({ api, owner, channelId, enabled: channelEnabl
   return <EventReferencesContext.Provider value={{ events: referenceEvents, collect, search: referencesAllowed ? search : undefined, suggest: referencesAllowed ? suggest : undefined, href: event => eventHref(channelId, event.id), open }}>
     <style>{css}</style>
     <div className="sp-channel-events" ref={root}>
-      {enabled && <div className="sp-channel-navigation"><div className="sp-channel-tabs" role="tablist" aria-label="Innhald i kanalen"
+      {(enabled || work) && <div className="sp-channel-navigation"><div className="sp-channel-tabs" role="tablist" aria-label="Innhald i kanalen" onKeyDown={navigateTabList}
         onKeyDownCapture={event => { event.currentTarget.dataset.keyboardNav = "true"; }}
         onPointerDownCapture={event => { delete event.currentTarget.dataset.keyboardNav; }}
         onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) delete event.currentTarget.dataset.keyboardNav; }}>
-        <button type="button" id={`${id}-chat-tab`} role="tab" tabIndex={tab === "chat" ? 0 : -1} aria-selected={tab === "chat"} aria-controls={`${id}-chat`} onClick={() => { setTab("chat"); updateUrl(null); }}
-          onKeyDown={event => { if (["ArrowRight", "ArrowLeft"].includes(event.key)) { event.preventDefault(); openOverview(); root.current?.querySelector<HTMLElement>(`[id="${CSS.escape(id)}-events-tab"]`)?.focus(); } }}>Meldingar</button>
-        <button type="button" id={`${id}-events-tab`} role="tab" tabIndex={tab === "events" ? 0 : -1} aria-selected={tab === "events"} aria-controls={`${id}-events`} aria-label={summaryLabel} title={summaryLabel} onClick={openOverview}
-          onKeyDown={event => { if (["ArrowRight", "ArrowLeft"].includes(event.key)) { event.preventDefault(); setTab("chat"); updateUrl(null); root.current?.querySelector<HTMLElement>(`[id="${CSS.escape(id)}-chat-tab"]`)?.focus(); } }}>Arrangement{summary && summary.ongoing_count > 0 && <span className="sp-events-ongoing" aria-hidden="true"> · Pågår</span>}{upcoming !== undefined && upcoming > 0 && <span className="sp-events-count" aria-hidden="true"> · {upcoming}<span className="sp-events-count-label"> komande</span></span>}{attention !== null && attention > 0 && <span className="sp-events-attention" aria-hidden="true" title={`${attention} arrangement endra`}> · {attention} endra</span>}{summaryError && <span aria-hidden="true"> · ?</span>}</button>
-      </div>{next && <button type="button" className="sp-events-next" onClick={() => open(next)} title={`${ongoing ? "Pågår" : "Neste"}: ${next.title}`}>
+        <button type="button" id={`${id}-chat-tab`} role="tab" tabIndex={tab === "chat" ? 0 : -1} aria-selected={tab === "chat"} aria-controls={`${id}-chat`} onClick={() => { setTab("chat"); updateUrl(null); }}>Meldingar</button>
+        {enabled && <button type="button" id={`${id}-events-tab`} role="tab" tabIndex={tab === "events" ? 0 : -1} aria-selected={tab === "events"} aria-controls={`${id}-events`} aria-label={summaryLabel} title={summaryLabel} onClick={openOverview}>Arrangement{summary && summary.ongoing_count > 0 && <span className="sp-events-ongoing" aria-hidden="true"> · Pågår</span>}{upcoming !== undefined && upcoming > 0 && <span className="sp-events-count" aria-hidden="true"> · {upcoming}<span className="sp-events-count-label"> komande</span></span>}{attention !== null && attention > 0 && <span className="sp-events-attention" aria-hidden="true" title={`${attention} arrangement endra`}> · {attention} endra</span>}{summaryError && <span aria-hidden="true"> · ?</span>}</button>}
+        {work && <button type="button" id={`${id}-work-tab`} role="tab" tabIndex={tab === "work" ? 0 : -1}
+          aria-selected={tab === "work"} aria-controls={`${id}-work`} onClick={() => { setTab("work"); updateUrl(null); }}>Arbeid</button>}
+      </div>{enabled && next && <button type="button" className="sp-events-next" onClick={() => open(next)} title={`${ongoing ? "Pågår" : "Neste"}: ${next.title}`}>
         <span>{ongoing ? "Pågår" : `Neste: ${new Intl.DateTimeFormat("nb-NO", { day: "numeric", month: "short", timeZone: next.timezone }).format(new Date(next.starts_at))}`}</span><span> · {next.title}</span>
       </button>}</div>}
-      <div className="sp-event-chat" id={`${id}-chat`} role={enabled ? "tabpanel" : undefined} aria-labelledby={enabled ? `${id}-chat-tab` : undefined} hidden={tab !== "chat"} inert={tab !== "chat"}>
+      <div className="sp-event-chat" id={`${id}-chat`} role={enabled || work ? "tabpanel" : undefined} aria-labelledby={enabled || work ? `${id}-chat-tab` : undefined} hidden={tab !== "chat"} inert={tab !== "chat"}>
         {disabledNotice && <Status>Arrangement er slått av i denne kanalen. Meldingar og utkast er bevarte. <Button variant="quiet" onClick={() => setDisabledNotice(false)}>Lukk</Button></Status>}
         <ChannelEventFilterContext.Provider value={{
           selected: Boolean(activeFilter), available: enabled && events.length > 0, clear: () => setFilter(null),
@@ -199,6 +200,8 @@ export function ChannelEventSpace({ api, owner, channelId, enabled: channelEnabl
         }}>{chat}</ChannelEventFilterContext.Provider>
         {composer}
       </div>
+      {work && <div role="tabpanel" id={`${id}-work`} aria-labelledby={`${id}-work-tab`}
+        className="sp-work-tab-panel" hidden={tab !== "work"}>{tab === "work" && work}</div>}
       <section className="sp-events-panel" id={`${id}-events`} role={enabled ? "tabpanel" : "region"} aria-label={enabled ? undefined : "Arkivert arrangement"} aria-labelledby={enabled ? `${id}-events-tab` : undefined} hidden={tab !== "events"} inert={tab !== "events"}>
         <div className="sp-events-inner">
           {error && <Status tone="error">{error} <Button onClick={reload}>Prøv igjen</Button></Status>}

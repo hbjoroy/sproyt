@@ -37,7 +37,7 @@ test("real event backend and React UI retain rich messages, RSVP, aliases, media
   await page.goto(`/?participant=${owner}&channel=${channel}&ui=react`);
   const app = page.locator("#sproyt-react-preview");
   await expect(app.getByRole("textbox", { name: "Skriv melding", exact: true })).toBeEnabled();
-  await expect(app.getByRole("tablist", { name: "Innhald i kanalen" })).toHaveCount(0);
+  await expect(app.getByRole("tablist", { name: "Innhald i kanalen" }).getByRole("tab")).toHaveText(["Meldingar", "Arbeid"]);
   expect(await (await request.get(`${root}/governance${a.query}`, { headers: a.headers })).json()).toMatchObject({ events_enabled: false });
   expect((await request.put(`${root}/events-enabled${b.query}`, { headers: b.headers, data: { enabled: true } })).status()).toBe(403);
   expect((await request.put(`${root}/events-enabled${a.query}`, { headers: a.headers, data: { enabled: true } })).ok()).toBeTruthy();
@@ -131,7 +131,7 @@ test("real event backend and React UI retain rich messages, RSVP, aliases, media
   await app.getByRole("button", { name: "Skriv om arrangementet", exact: true }).click();
   const composer = app.getByRole("textbox", { name: "Skriv melding", exact: true });
   await expect(app.getByRole("group", { name: "Arrangement for meldinga" })).toContainText("Oppretta i grensesnittet");
-  await composer.fill("Vi møtest ved grinda"); await composer.press("Enter");
+  await composer.fill("Vi møtest ved grinda"); await composer.press("Control+Enter");
   await expect(composer).toHaveValue("");
   await expect.poll(async () => (await (await request.get(`${path}/${secondId}/messages${a.query}`, { headers: a.headers })).json())
     .messages.some((item: { body: string }) => item.body === "Vi møtest ved grinda\n\n#arr:friluft")).toBe(true);
@@ -161,7 +161,7 @@ test("real event backend and React UI retain rich messages, RSVP, aliases, media
   const availability = settings.getByRole("switch", { name: "Arrangement", exact: true });
   await expect(availability).toBeChecked(); await availability.click(); await expect(availability).not.toBeChecked();
   await settings.getByRole("button", { name: "Lukk", exact: true }).click();
-  await expect(app.getByRole("tablist", { name: "Innhald i kanalen" })).toHaveCount(0);
+  await expect(app.getByRole("tablist", { name: "Innhald i kanalen" }).getByRole("tab")).toHaveText(["Meldingar", "Arbeid"]);
   await page.goto(`/?participant=${owner}&channel=${channel}&event=${event.id}&ui=react`);
   await expect(app.getByRole("heading", { name: input.title, exact: true })).toBeVisible();
   await expect(app.getByText(/^Arrangement er slått av i denne kanalen\./u)).toBeVisible();

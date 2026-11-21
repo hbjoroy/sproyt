@@ -1,5 +1,5 @@
 import { Button, Status } from "@sproyt/ui/react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { CircleProcess, CircleProcessApi, ProcessStep } from "../../circle-processes";
 import css from "./circle-processes.css";
 
@@ -11,20 +11,27 @@ const statuses: Readonly<Record<string, string>> = {
   planned: "Planlagd", in_development: "Under utvikling", resolved: "Løyst", rejected: "Avvist", duplicate: "Duplikat"
 };
 const statusName = (status: string) => statuses[status] ?? "Ukjend status";
-function StepList({ items }: { items: readonly ProcessStep[] }) {
-  return <ul className="sp-circle-process-steps">{items.map((step, index) => <li key={index}><span>{step.name}</span><span>{statusName(step.status)}</span></li>)}</ul>;
+function StepList({ items, canReadAssignee }: { items: readonly ProcessStep[]; canReadAssignee?: (channelId: string) => boolean }) {
+  return <ul className="sp-circle-process-steps">{items.map((step, index) => <li key={index}>
+    <span>{step.name}</span><span>{statusName(step.status)}</span>
+    {step.task && canReadAssignee?.(step.task.channel_id) && <small>Tildelt {step.task.assignee_name}</small>}
+  </li>)}</ul>;
 }
-function ProcessRow({ process }: { process: CircleProcess }) {
-  return <details className="sp-circle-process">
-    <summary><span><strong>{process.title}</strong><span className="sp-circle-process-channel"># {process.channel_name}</span></span>
+export function ProcessRow({ process, definition, onOpenChange, canReadAssignee }: {
+  process: CircleProcess; definition?: ReactNode;
+  onOpenChange?: (open: boolean) => void; canReadAssignee?: (channelId: string) => boolean;
+}) {
+  return <details className="sp-circle-process" onToggle={event => onOpenChange?.(event.currentTarget.open)}>
+    <summary><span><strong>{process.title}</strong>{definition === undefined && <span className="sp-circle-process-channel"># {process.channel_name}</span>}</span>
       <span className="sp-circle-process-status">{statusName(process.status)}</span></summary>
     <div className="sp-circle-process-body">
       <p className="sp-help">{process.projection ? "Sist registrerte status" : "Status"}: {statusName(process.status)}.</p>
+      {definition}
       <h4>Registrerte steg</h4>
-      {process.steps.length ? <StepList items={process.steps} /> : <p>Ingen steg er registrerte enno.</p>}
+      {process.steps.length ? <StepList items={process.steps} canReadAssignee={canReadAssignee} /> : <p>Ingen steg er registrerte enno.</p>}
       {process.steps_truncated && <p className="sp-help">Dette er eit utdrag av dei registrerte stega.</p>}
       <h4>Attståande steg</h4>
-      {process.remaining_steps === null ? <p>Heart opplyser ikkje om attståande steg.</p>
+      {process.remaining_steps === null ? <p>{definition === undefined ? "Heart opplyser ikkje om attståande steg." : "Ingen opplysningar om attståande steg."}</p>
         : process.remaining_steps.length ? <StepList items={process.remaining_steps} /> : <p>Ingen attståande steg.</p>}
       <h4>Historikk</h4>
       {process.history.length ? <ol className="sp-circle-process-history">{process.history.map((event, index) => <li key={index}>

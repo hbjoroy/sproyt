@@ -140,7 +140,7 @@ for (const from of ["detail", "filter"] as const) test(`availability invalidatio
   if (from === "filter") await app.getByRole("group", { name: "Filtrer meldingar" }).getByRole("button", { name: /^Konsert med eit langt og lesbart namn, / }).click();
   else await app.getByRole("link", { name: "Konsert med eit langt og lesbart namn", exact: true }).click();
   server.setEnabled(false);
-  await expect(app.getByRole("tablist", { name: "Innhald i kanalen" })).toHaveCount(0);
+  await expect(app.getByRole("tablist", { name: "Innhald i kanalen" }).getByRole("tab")).toHaveText(["Meldingar", "Arbeid"]);
   await expect(composer).toBeVisible(); await expect(composer).toHaveValue("Utkastet skal bevarast");
   await composer.fill("Utkastet skal bevarast #arr:ko");
   await expect(app.getByRole("listbox", { name: "Arrangementsforslag" })).toHaveCount(0);
@@ -159,10 +159,10 @@ for (const from of ["detail", "filter"] as const) test(`availability invalidatio
   await app.getByRole("tab", { name: "Meldingar", exact: true }).click();
   await expect(composer).toHaveValue("Utkastet skal bevarast");
 });
-test("an off deep link opens a read-only archive without an irrelevant navigation row", async ({ page }) => {
+test("an off deep link opens a read-only archive while messages and work remain available", async ({ page }) => {
   const { app } = await setup(page, true, false, false);
   await expect(app.getByRole("heading", { name: /Konsert med/, level: 2 })).toBeVisible();
-  await expect(app.getByRole("tablist", { name: "Innhald i kanalen" })).toHaveCount(0);
+  await expect(app.getByRole("tablist", { name: "Innhald i kanalen" }).getByRole("tab")).toHaveText(["Meldingar", "Arbeid"]);
   await expect(app.getByText("Lastar arrangement …", { exact: true })).toHaveCount(0);
   await expect(app.getByRole("radio", { name: "Deltek", exact: true })).toBeDisabled();
   await expect(app.getByRole("button", { name: "Legg til bilete", exact: true })).toHaveCount(0);
@@ -170,11 +170,11 @@ test("an off deep link opens a read-only archive without an irrelevant navigatio
   await expect(app.getByRole("textbox", { name: "Skriv melding", exact: true })).toBeVisible();
 });
 for (const [width, theme] of [[320, "light"], [320, "dark"], [390, "light"], [390, "dark"], [1440, "light"], [1440, "dark"]] as const) {
-  test(`disabled events leave ordinary chat full height at ${width} ${theme}`, async ({ page }) => {
+  test(`disabled events leave messages and work available at ${width} ${theme}`, async ({ page }) => {
     await page.setViewportSize({ width, height: width === 320 ? 360 : 900 });
     await page.addInitScript(mode => localStorage.setItem("sproyt.theme.v1", mode), theme);
     const { app, collectionReads } = await setup(page, false, false, false);
-    await expect(app.getByRole("tablist", { name: "Innhald i kanalen" })).toHaveCount(0);
+    await expect(app.getByRole("tablist", { name: "Innhald i kanalen" }).getByRole("tab")).toHaveText(["Meldingar", "Arbeid"]);
     await expect(app.getByRole("group", { name: "Filtrer meldingar" })).toHaveCount(0);
     expect(collectionReads).toEqual([]);
     if (process.env.SPROYT_EVENT_SCREENSHOTS) await app.screenshot({ path: `${process.env.SPROYT_EVENT_SCREENSHOTS}/events-off-${width}-${theme}.png` });
@@ -464,7 +464,7 @@ test("detail chat actions preserve the draft and make composition context explic
 });
 
 
-test("an explicit HTTP disable clears navigation and context before channel invalidation and can recover", async ({ page }) => {
+test("an explicit HTTP disable clears event navigation and context before channel invalidation and can recover", async ({ page }) => {
   const { app, getEvent } = await setup(page);
   const composer = app.getByRole("textbox", { name: "Skriv melding", exact: true });
   await composer.fill("Bevar dette utkastet"); const field = await composer.elementHandle();
@@ -477,8 +477,8 @@ test("an explicit HTTP disable clears navigation and context before channel inva
     summary: { as_of: "2026-11-13T12:00:00Z", upcoming_count: enabled ? 1 : 0, ongoing_count: 0, next_event: enabled ? getEvent() : null }
   } }));
   await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
-  await expect(app.getByRole("tablist", { name: "Innhald i kanalen" })).toHaveCount(0);
-  await expect(app.locator(".sp-channel-navigation")).toHaveCount(0);
+  await expect(app.getByRole("tablist", { name: "Innhald i kanalen" }).getByRole("tab")).toHaveText(["Meldingar", "Arbeid"]);
+  await expect(app.locator(".sp-events-next")).toHaveCount(0);
   await expect(app.getByRole("group", { name: "Arrangement for meldinga", exact: true })).toHaveCount(0);
   await expect(composer).toHaveValue("Bevar dette utkastet"); expect(await field!.evaluate(element => element.isConnected)).toBe(true);
   enabled = true;

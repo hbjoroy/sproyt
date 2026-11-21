@@ -184,7 +184,7 @@ pub(super) async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>
         chat,
         account_data: AccountDataService::new(repositories.profiles, repositories.account_exports),
         operations: operations.clone(),
-        processes: ProcessService::start(repositories.process, process_gateway_from_env()?),
+        processes: process_service_from_env(repositories.process)?,
         agents: AgentService::new(repositories.agent),
         chat_agents: Some(chat_agents),
         integrations: IntegrationService::new(repositories.integration),
@@ -538,6 +538,18 @@ pub(super) fn build_router(state: AppState, operations: OperationalState) -> Rou
             "/api/v1/circles/{id}/processes",
             get(crate::web::processes::circle_processes),
         )
+        .route(
+            "/api/v1/me/process-tasks",
+            get(crate::web::task_queue::list),
+        )
+        .route(
+            "/api/v1/channels/{id}/processes",
+            get(crate::web::processes::channel_processes),
+        )
+        .route(
+            "/api/v1/channels/{id}/processes/{process_id}",
+            get(crate::web::processes::channel_process_detail),
+        )
         .route("/api/v1/processes/{id}", get(get_process))
         .route("/api/v1/processes/{id}/inspect", post(inspect_process))
         .route("/api/v1/processes/{id}/messages", post(correlate_process))
@@ -724,20 +736,20 @@ mod request_trace_tests {
     }
 }
 
-fn process_gateway_from_env() -> Result<Option<SharedProcessGateway>, crate::process::ProcessError>
-{
-    if !process_outbox_enabled(
+fn process_service_from_env(
+    repository: crate::process::SharedProcessRepository,
+) -> Result<ProcessService, crate::process::ProcessError> {
+    let Ok(url) = std::env::var("SPROYT_HEART_URL") else {
+        return Ok(ProcessService::start(repository, None));
+    };
+    let gateway = HeartGateway::new(url, Duration::from_secs(5), 2)?;
+    let worker = process_outbox_enabled(
         std::env::var("SPROYT_PROCESS_OUTBOX_ENABLED")
             .ok()
             .as_deref(),
-    ) {
-        return Ok(None);
-    }
-    let Some(url) = std::env::var("SPROYT_HEART_URL").ok() else {
-        return Ok(None);
-    };
-    let gateway = HeartGateway::new(url, Duration::from_secs(5), 2)?;
-    Ok(Some(std::sync::Arc::new(gateway)))
+    )
+    .then(|| std::sync::Arc::new(gateway.clone()) as SharedProcessGateway);
+    ProcessService::start(repository, worker).with_overview_gateway(&gateway)
 }
 
 fn process_outbox_enabled(value: Option<&str>) -> bool {

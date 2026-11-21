@@ -93,7 +93,17 @@ fn transitions(from: &str) -> Vec<String> {
 
 // A new route cannot redirect an already-created task. Both identity and channel
 // are checked again at admission, completion and task/history reads.
-const ROUTE: &str = "select cast(r.id as text) as route,cast(r.channel_id as text) as channel,c.name from work_items w join work_applications a on a.id=w.application_id and a.enabled join channel_process_bindings b on b.id=w.binding_id and b.enabled join channel_process_applications ca on ca.binding_id=b.id and ca.application_id=a.id join channel_task_routes r on r.binding_id=b.id and r.task_key='change-status' and r.process_role='product-handler' and r.enabled join channels c on c.id=r.channel_id join channel_memberships cm on cm.channel_id=r.channel_id and cm.user_id=?uuid and cm.role<>'observer' join application_processors p on p.application_id=a.id and p.user_id=cm.user_id and p.can_review join application_process_roles pr on pr.application_id=a.id and pr.user_id=p.user_id and pr.process_role='product-handler' where w.id=?uuid and w.process_status='completed' and w.status in ('planned','in_development','resolved','rejected')";
+pub(super) const ROUTE_JOINS: &str = "from work_items w join work_applications a on a.id=w.application_id and a.enabled join channel_process_bindings b on b.id=w.binding_id and b.enabled join channel_process_applications ca on ca.binding_id=b.id and ca.application_id=a.id join channel_task_routes r on r.binding_id=b.id and r.task_key='change-status' and r.process_role='product-handler' and r.enabled join channels c on c.id=r.channel_id join channel_memberships cm on cm.channel_id=r.channel_id and cm.role<>'observer' join application_processors p on p.application_id=a.id and p.user_id=cm.user_id and p.can_review join application_process_roles pr on pr.application_id=a.id and pr.user_id=p.user_id and pr.process_role='product-handler'";
+pub(super) const ROUTE_PHASE: &str = "w.process_status='completed' and w.status in ('planned','in_development','resolved','rejected')";
+
+fn route_sql(pg: bool) -> String {
+    sql(
+        &format!(
+            "select cast(r.id as text) as route,cast(r.channel_id as text) as channel,c.name {ROUTE_JOINS} where cm.user_id=?uuid and w.id=?uuid and {ROUTE_PHASE}"
+        ),
+        pg,
+    )
+}
 
 impl WorkItems {
     pub(super) async fn sync_status_changes(&self, chat: &ChatEngine, now: i64) -> Result<()> {
@@ -343,7 +353,7 @@ impl WorkItems {
     ) -> Result<Option<(String, String, String)>> {
         macro_rules! read {
             ($pool:expr,$pg:expr) => {{
-                sqlx::query(&sql(ROUTE, $pg))
+                sqlx::query(&route_sql($pg))
                     .bind(actor)
                     .bind(item)
                     .fetch_optional($pool)
@@ -408,7 +418,7 @@ impl WorkItems {
         let request = command.request_id.to_string();
         macro_rules! accept { ($pool:expr,$pg:expr) => {{
             let mut tx=$pool.begin().await.map_err(storage)?;
-            let route=sqlx::query(&sql(ROUTE,$pg)).bind(&actor).bind(&item).fetch_optional(&mut *tx).await.map_err(storage)?.ok_or(RepositoryError::PermissionDenied)?;
+            let route=sqlx::query(&route_sql($pg)).bind(&actor).bind(&item).fetch_optional(&mut *tx).await.map_err(storage)?.ok_or(RepositoryError::PermissionDenied)?;
             let channel:String=route.try_get("channel").map_err(storage)?; let route_id:String=route.try_get("route").map_err(storage)?; let channel_name:String=route.try_get("name").map_err(storage)?;
             let old=sqlx::query(&sql("select cast(id as text) as id,cast(work_item_id as text) as item,cast(source_task_id as text) as source,cast(source_message_id as text) as message,start_revision,status,cast(route_id as text) as route,cast(channel_id as text) as channel from work_item_status_changes where actor_id=?uuid and request_id=?uuid",$pg)).bind(&actor).bind(&request).fetch_optional(&mut *tx).await.map_err(storage)?;
             if let Some(old)=old {
@@ -450,7 +460,7 @@ impl WorkItems {
             let mut tx=$pool.begin().await.map_err(storage)?;
             let row=sqlx::query(&sql("select cast(x.id as text) as id,cast(w.id as text) as item,w.status as case_status,w.revision,x.status,cast(x.route_id as text) as route,cast(x.channel_id as text) as channel,cast(x.decision_request_id as text) as request,x.decision_revision,x.decision_status,x.internal_note,x.public_feedback,x.no_change from work_item_status_changes x join work_items w on w.id=x.work_item_id where x.task_id=?uuid and x.message_id=?uuid and x.actor_id=?uuid",$pg)).bind(&task_string).bind(command.message_id.to_string()).bind(&actor_string).fetch_optional(&mut *tx).await.map_err(storage)?.ok_or(RepositoryError::PermissionDenied)?;
             let id:String=row.try_get("id").map_err(storage)?; let item:String=row.try_get("item").map_err(storage)?;
-            let route=sqlx::query(&sql(ROUTE,$pg)).bind(&actor_string).bind(&item).fetch_optional(&mut *tx).await.map_err(storage)?.ok_or(RepositoryError::PermissionDenied)?;
+            let route=sqlx::query(&route_sql($pg)).bind(&actor_string).bind(&item).fetch_optional(&mut *tx).await.map_err(storage)?.ok_or(RepositoryError::PermissionDenied)?;
             if route.try_get::<String,_>("route").map_err(storage)?!=row.try_get::<String,_>("route").map_err(storage)? || route.try_get::<String,_>("channel").map_err(storage)?!=row.try_get::<String,_>("channel").map_err(storage)? {return Err(RepositoryError::PermissionDenied);}
             if let Some(old)=row.try_get::<Option<String>,_>("request").map_err(storage)? {
                 if old!=command.request_id.to_string() || row.try_get::<Option<i64>,_>("decision_revision").map_err(storage)?!=Some(command.expected_revision) || row.try_get::<Option<String>,_>("decision_status").map_err(storage)?.unwrap_or_default()!=command.status || row.try_get::<Option<String>,_>("internal_note").map_err(storage)?.unwrap_or_default()!=command.internal_note || row.try_get::<Option<String>,_>("public_feedback").map_err(storage)?.unwrap_or_default()!=command.public_feedback || row.try_get::<Option<bool>,_>("no_change").map_err(storage)?!=Some(command.no_change) {return Err(RepositoryError::Conflict);}
