@@ -1428,6 +1428,15 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(finalized, ("planned".into(), "bug".into(), "high".into()));
+        // The handoff exercise also checks what a source-channel member can read.
+        sqlx::query(
+            "insert into channel_memberships(channel_id,user_id,role) values(?,?,'member')",
+        )
+        .bind(channel.to_string())
+        .bind(reviewer.to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
         exercise_information_handoff(&service, owner, reviewer, channel, app, source).await;
         let mut changed = command.clone();
         changed.title = "Different".into();
