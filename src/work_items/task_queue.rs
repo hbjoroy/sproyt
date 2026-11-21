@@ -140,7 +140,7 @@ impl Candidate {
 #[serde(tag = "kind", content = "task", rename_all = "snake_case")]
 enum QueueTask {
     WorkItem(Box<TaskView>),
-    ProcessPilot(process_pilot::TaskView),
+    ProcessPilot(Box<process_pilot::TaskView>),
 }
 
 #[derive(Serialize)]
@@ -268,7 +268,7 @@ impl WorkItems {
                     .await
                 {
                     Ok(task) if task.can_complete && task.delivery_status == "ready" => {
-                        Ok(Some(QueueTask::ProcessPilot(task)))
+                        Ok(Some(QueueTask::ProcessPilot(Box::new(task))))
                     }
                     Ok(_) | Err(RepositoryError::NotFound | RepositoryError::PermissionDenied) => {
                         Ok(None)
