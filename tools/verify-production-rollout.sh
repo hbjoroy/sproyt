@@ -7,15 +7,17 @@ usage: verify-production-rollout.sh <app-revision> <image-digest> [gitops-revisi
 
 Read-only verification of the Argo CD and Kubernetes rollout plus the public
 anonymous OIDC boundary. The current kubectl context must point at the target
-cluster. gitops-revision is optional.
+cluster. gitops-revision is optional. For a chart-only update, set SPROYT_CHART_REVISION to its exact Git commit.
 EOF
   exit 2
 }
 
 app_revision=${1:-}
+chart_revision=${SPROYT_CHART_REVISION:-$app_revision}
 image_digest=${2:-}
 gitops_revision=${3:-}
 [[ -n "$app_revision" && "$app_revision" =~ ^[0-9a-f]{40}$ ]] || usage
+[[ "$chart_revision" =~ ^[0-9a-f]{40}$ ]] || usage
 [[ "$image_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || usage
 if [[ -n "$gitops_revision" && ! "$gitops_revision" =~ ^[0-9a-f]{7,40}$ ]]; then
   usage
@@ -48,11 +50,11 @@ jq -e '.status.sync.status == "Synced" and .status.health.status == "Healthy"' \
 jq -e '.status.sync.status == "Synced" and .status.health.status == "Healthy"' \
   >/dev/null <<<"$child"
 
-actual_app_revision=$(jq -r \
+actual_chart_revision=$(jq -r \
   '.spec.sources[] | select(.repoURL | endswith("/sproyt.git")) | .targetRevision' \
   <<<"$child")
-[[ "$actual_app_revision" == "$app_revision" ]] || {
-  echo "Argo CD child revision mismatch: expected $app_revision, got $actual_app_revision" >&2
+[[ "$actual_chart_revision" == "$chart_revision" ]] || {
+  echo "Argo CD child revision mismatch: expected $chart_revision, got $actual_chart_revision" >&2
   exit 1
 }
 
@@ -125,13 +127,13 @@ script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 "$script_dir/verify-oidc-provider.sh" "$issuer" >/dev/null
 
 jq -n \
-  --arg appRevision "$app_revision" \
+  --arg chartRevision "$chart_revision" --arg appRevision "$app_revision" \
   --arg image "$expected_image" \
   --argjson replicas "$(jq '.spec.replicas' <<<"$workload")" \
   --argjson readyEndpoints "$ready_endpoints" \
   --arg publicUrl "$public_url" \
   --arg issuer "$issuer" \
   --arg publicRevision "$(jq -r '.revision' <<<"$version")" \
-  '{status:"verified", appRevision:$appRevision, image:$image, replicas:$replicas,
+  '{status:"verified", appRevision:$appRevision, chartRevision:$chartRevision, image:$image, replicas:$replicas,
     readyEndpoints:$readyEndpoints, publicUrl:$publicUrl, issuer:$issuer,
     publicRevision:$publicRevision}'
