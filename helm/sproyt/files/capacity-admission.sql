@@ -11,7 +11,7 @@ WITH clients AS (
     AND (datid IS NOT NULL OR backend_type = 'client backend'
          OR (usesysid IS NOT NULL AND backend_type IS NULL))
 ), demand AS (
-  SELECT least(97, current_setting('max_connections')::int
+  SELECT least(132, current_setting('max_connections')::int
                    - current_setting('reserved_connections')::int
                    - current_setting('superuser_reserved_connections')::int)
          - total - greatest(0, 15-web_media) - greatest(0, 6-heart)

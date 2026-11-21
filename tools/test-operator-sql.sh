@@ -105,8 +105,11 @@ awk -F'|' '
 
 # Replay aggregate load in temporary rows on the isolated CI fixture. PostgreSQL
 # supplies the actual reserved-slot settings. The published admission query is unmodified.
+ordinary_slots=$("${psql[@]}" -c "SELECT least(132, current_setting('max_connections')::int - current_setting('reserved_connections')::int - current_setting('superuser_reserved_connections')::int)")
 for case in '40 10 1' '41 10 0' '37 13 1' '38 13 0' '48 2 1' '49 2 0'; do
   read -r other extra expect <<<"$case"
+  # The original fixture boundaries assume 97 ordinary slots.
+  other=$((other + ordinary_slots - 97))
   actual=$("${psql[@]}" -v other="$other" -v extra="$extra" <<'SQL'
 SET search_path = pg_temp, pg_catalog;
 CREATE TEMP TABLE pg_stat_activity (pid int, datname text, backend_type text, datid oid, usesysid oid);
