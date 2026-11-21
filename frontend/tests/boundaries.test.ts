@@ -27,6 +27,7 @@ import "./device-install.test";
 import "./device-push.test";
 import "./share-target.test";
 import "../src/process-pilot.test";
+import "../src/channel-work.test";
 import "../src/work-items.test";
 import "../src/view-history.test";
 import "../src/personal-space.test";

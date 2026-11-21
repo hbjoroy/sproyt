@@ -37,7 +37,7 @@ insert into process_pilot_tasks(id,run_id,message_id,node_id,status) values('{ch
                 let event=Uuid::now_v7();
                 sqlx::raw_sql(&format!("insert into process_events(id,process_link_id,event_key,event_type,payload,actor_id,occurred_at) values('{event}','{legacy}','bounded-{index}','process.correlated','{{}}','{owner}','2026-01-02 00:00:00+00:00');")).execute(&pool).await.unwrap();
             }
-            let query=CircleProcessQuery{circle:CircleId::from_uuid(circle),actor:UserId::from_uuid(owner),limit:2,all:true,after:None};
+            let query=CircleProcessQuery{scope:ProcessScope::ModeratedCircle(CircleId::from_uuid(circle)),actor:UserId::from_uuid(owner),limit:2,all:true,after:None};
             let mut next=query.clone();
             let mut ids=HashSet::new();
             let mut rows=Vec::new();
@@ -56,6 +56,24 @@ insert into process_pilot_tasks(id,run_id,message_id,node_id,status) values('{ch
             assert_eq!(rows.iter().find(|r|r.kind=="work_export").unwrap().status,"failed");
             assert!(rows.iter().all(|r|r.remaining_steps.is_none()&&r.projection));
             assert!(rows.iter().filter(|r|r.kind!="process").all(|r|r.history.is_empty()),"current tasks are not invented event history");
+            let mut channel_query=query.clone();
+            channel_query.scope=ProcessScope::Channel{channel,process:None};
+            channel_query.actor=UserId::from_uuid(member);
+            channel_query.limit=50;
+            assert_eq!($list(&pool,channel_query.clone()).await.unwrap().processes.len(),5);
+            let mut unauthorized=channel_query.clone();
+            unauthorized.scope=ProcessScope::Channel{channel:hidden,process:None};
+            assert!(matches!($list(&pool,unauthorized).await,Err(RepositoryError::PermissionDenied)));
+            let mut detail=channel_query.clone();
+            detail.scope=ProcessScope::Channel{channel,process:Some(format!("work_review:{work}"))};
+            let single=$list(&pool,detail.clone()).await.unwrap().processes;
+            assert_eq!(single.len(),1);
+            let card=single[0].steps[0].task.as_ref().unwrap();
+            assert_eq!(card.id,task.to_string());
+            assert_eq!(card.message_id,message.to_string());
+            assert_eq!(card.channel_id,channel.to_string());
+            assert_eq!(card.assignee_name,"Owner");
+            assert_eq!(single[0].definition_version.as_deref(),Some("1.0.0"),"stored run version, independent of the current binding");
             let json=serde_json::to_string(&rows).unwrap();
             assert!(!json.contains("SECRET"));
             let mut open=query.clone();open.all=false;open.limit=50;
@@ -85,6 +103,16 @@ insert into process_pilot_tasks(id,run_id,message_id,node_id,status) values('{ch
             assert_eq!($list(&pool,open.clone()).await.unwrap().processes.len(),2);
             sqlx::raw_sql(&format!("update work_items set task_channel_id='{channel}' where id='{work}'; update work_item_tasks set channel_id='{hidden}' where id='{task}';")).execute(&pool).await.unwrap();
             assert_eq!($list(&pool,open.clone()).await.unwrap().processes.len(),2);
+            assert!($list(&pool,detail).await.unwrap().processes.is_empty());
+            // A member of both channels follows routed tasks from their work queue.
+            // The process itself has precisely one origin in channel navigation.
+            sqlx::raw_sql(&format!("insert into channel_memberships(channel_id,user_id,role) values('{hidden}','{member}','member');")).execute(&pool).await.unwrap();
+            let mut routed=channel_query.clone();
+            routed.scope=ProcessScope::Channel{channel:hidden,process:None};
+            let routed_rows=$list(&pool,routed).await.unwrap().processes;
+            assert!(routed_rows.iter().all(|row|row.channel_id==hidden.to_string()));
+            assert!(routed_rows.iter().all(|row|row.kind!="work_review"));
+            assert!($list(&pool,channel_query).await.unwrap().processes.iter().any(|row|row.kind=="work_review"));
             // Real status history exposes only status/time, never internal notes.
             let receipt=Uuid::now_v7();
             sqlx::raw_sql(&format!("update work_item_tasks set channel_id='{channel}' where id='{task}'; update work_item_status_changes set status='completed' where id='{change}'; insert into work_item_status_history(id,change_id,work_item_id,revision,actor_id,from_status,to_status,internal_note,public_feedback,created_at) values('{receipt}','{change}','{work}',2,'{owner}','reviewing','planned','SECRET-HISTORY','SECRET-FEEDBACK',1794050000);")).execute(&pool).await.unwrap();
@@ -98,7 +126,7 @@ insert into process_pilot_tasks(id,run_id,message_id,node_id,status) values('{ch
             // Cursor scope/mode/size and limits fail closed.
             let mut wrong=query.clone();wrong.limit=1;
             let cursor=$list(&pool,wrong.clone()).await.unwrap().next_cursor.unwrap();
-            wrong.after=Some(cursor);wrong.circle=CircleId::from_uuid(other);
+            wrong.after=Some(cursor);wrong.scope=ProcessScope::ModeratedCircle(CircleId::from_uuid(other));
             assert!(wrong.validate().is_err());wrong=query.clone();wrong.limit=51;assert!(wrong.validate().is_err());
             let _=foreign_task;
             pool.close().await;

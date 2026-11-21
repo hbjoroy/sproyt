@@ -590,7 +590,11 @@
   .sp-theme .sp-topic-pills .sp-button { min-height: 44px; }
   .sp-theme .sp-topic-pills .sp-button[aria-pressed="true"]::before { inset-block: 6px; }
 }
-.sp-theme .sp-product-nav-tabs.sp-personal-tabs { flex: none; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.sp-theme .sp-product-nav-tabs.sp-personal-tabs { flex: none; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); grid-template-columns: none; }
+.sp-theme .sp-personal-panes[data-personal-layout="wide"]:has(> .sp-personal-tabs) { grid-template-rows: auto minmax(0, 1fr); }
+.sp-theme .sp-personal-tabs, .sp-theme .sp-personal-panes > .sp-work-tab-panel { grid-column: 1 / -1; }
+.sp-theme .sp-work-tab-panel { min-height: 0; min-width: 0; overflow: auto; flex: 1; }
+.sp-theme .sp-work-tab-panel[hidden] { display: none; }
 .sp-theme .sp-personal-note { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; }
 .sp-theme .sp-personal-note-header { display: flex; align-items: baseline; justify-content: space-between; gap: .25rem .75rem; flex-wrap: wrap; padding: .25rem 1rem; }
 .sp-theme .sp-personal-note-header h2 { font-size: 1rem; margin: 0; }

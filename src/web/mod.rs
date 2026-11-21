@@ -26,6 +26,7 @@ pub(crate) mod stream;
 pub(crate) mod system;
 pub(crate) mod thread_previews;
 pub(crate) mod topic_context;
+pub(crate) mod task_queue;
 pub(crate) mod topics;
 pub(crate) mod work_items;
 

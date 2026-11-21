@@ -170,6 +170,10 @@ pub(crate) struct TaskView {
 }
 
 impl ProcessPilot {
+    pub(crate) fn overview_connection(&self) -> (&reqwest::Client, &str) {
+        (&self.http, &self.base)
+    }
+
     pub async fn from_env(
         config: &DatabaseConfig,
         pool: Option<&PgPool>,
@@ -727,7 +731,13 @@ mod tests {
         }
         (pilot, owner, reader, channel)
     }
-    async fn exercise(pilot: ProcessPilot, owner: UserId, reader: UserId, channel: String) {
+    async fn exercise(
+        pilot: ProcessPilot,
+        owner: UserId,
+        reader: UserId,
+        channel: String,
+        queue: Option<&crate::work_items::WorkItems>,
+    ) {
         assert!(
             !pilot
                 .configuration(&owner, &channel)
@@ -806,6 +816,31 @@ mod tests {
                 .await
                 .is_err()
         );
+        if let Some(queue) = queue {
+            let channel_id = Uuid::parse_str(&channel).unwrap();
+            let page = queue
+                .task_queue(owner.clone(), Some(channel_id), None, 1, Some(&pilot))
+                .await
+                .unwrap();
+            let page = serde_json::to_value(page).unwrap();
+            assert_eq!(page["tasks"].as_array().unwrap().len(), 1);
+            assert_eq!(page["tasks"][0]["kind"], "process_pilot");
+            assert_eq!(page["tasks"][0]["task"]["id"], task.id.to_string());
+            assert_eq!(page["tasks"][0]["task"]["can_complete"], true);
+
+            let after = format!("{message}:process_pilot").parse().unwrap();
+            let page = queue
+                .task_queue(
+                    owner.clone(),
+                    Some(channel_id),
+                    Some(after),
+                    1,
+                    Some(&pilot),
+                )
+                .await
+                .unwrap();
+            assert_eq!(serde_json::to_value(page).unwrap()["tasks"], json!([]));
+        }
         let completion = Uuid::now_v7();
         let view = pilot
             .complete(
@@ -897,7 +932,7 @@ mod tests {
     #[tokio::test]
     async fn sqlite_projection_permissions_and_completion_receipts() {
         let (p, o, r, c) = fixture(None).await;
-        exercise(p, o, r, c).await;
+        exercise(p, o, r, c, None).await;
     }
     #[tokio::test]
     async fn scheduler_reaches_runs_beyond_first_batch_even_when_heart_is_down() {
@@ -1014,7 +1049,14 @@ mod tests {
     async fn postgres_projection_permissions_and_completion_receipts() {
         let url = std::env::var("SPROYT_TEST_DATABASE_URL").unwrap();
         let (p, o, r, c) = fixture(Some(&url)).await;
-        exercise(p, o, r, c).await;
+        let Store::Pg(pool) = &p.store else {
+            unreachable!()
+        };
+        let config = DatabaseConfig::new(url).unwrap();
+        let queue = crate::work_items::WorkItems::from_env(&config, Some(pool))
+            .await
+            .unwrap();
+        exercise(p, o, r, c, Some(&queue)).await;
     }
 
     #[tokio::test]

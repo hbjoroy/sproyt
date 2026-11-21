@@ -59,6 +59,8 @@ import { AgentPlaceCard } from "./agent-place-card";
 import type { AgentGeoapifyRollApi } from "../../agent-geoapify-roll";
 import { AgentGeoapifyCard } from "./agent-geoapify-card";
 import { personalMessageReference, type PersonalSpaceApi } from "../../personal-space";
+import { ChannelWork } from "./channel-work";
+import type { ChannelWorkApi } from "../../channel-work";
 import { PersonalSpaceShortcut, SavedMessagePreview } from "./personal-space";
 import { ChannelEventSpace, eventHref } from "./channel-events";
 import { ChannelEventBoundary } from "./event-references";
@@ -90,6 +92,7 @@ interface DevelopmentPreviewHost extends PreviewReactionHost, PreviewComposerHos
   readonly processPilotIdentity: () => string;
   readonly imageGeneration: ImageGenerationOwner;
   readonly personalSpace: PersonalSpaceApi;
+  readonly channelWork: ChannelWorkApi;
   readonly channelEvents: ChannelEventsApi;
   readonly uploadEventImage: (channelId: string, file: File, progress: (text: string) => void) => Promise<string>;
   readonly channelTopics: ChannelTopicsApi;
@@ -572,8 +575,12 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
   let renderedEntry = "";
   let personalLatestRequest = 0;
   let topicResetRequest = 0;
-  let eventsTabOpen = false;
+  let secondaryPaneOpen = false;
   let workspacePageOpen = false;
+  function setSecondaryPaneOpen(open: boolean) {
+    secondaryPaneOpen = open;
+    channelScroll.setPaused(open || workspacePageOpen);
+  }
   let memberFocus: { owner: string; channelId: string; historyEntryId: string } | null = null;
   let threadFocus: { owner: string | null; messageId: string; element: HTMLElement } | null = null;
   const reactionPicker = createPreviewReactionPicker(host);
@@ -633,7 +640,7 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
     const placeCandidates = [...snapshot.timeline.messages, ...(snapshot.thread?.root ? [snapshot.thread.root] : []), ...(snapshot.thread?.replies ?? [])]
       .filter(message => !message.deleted_at && message.body === PLACE_LOOKUP_MARKER).map(message => ({ id: message.id, revision: JSON.stringify([message.body, message.edited_at ?? null]) }));
     workspacePageOpen = Boolean(pageKey);
-    channelScroll.setPaused(workspacePageOpen || eventsTabOpen);
+    channelScroll.setPaused(workspacePageOpen || secondaryPaneOpen);
     threadScroll.setPaused(Boolean(pageKey));
     if (!snapshot.activeChannel && !snapshot.channels.length && snapshot.directory.ready && historyState.target?.kind !== "conversation") view = "list";
     if (historyState.entryId !== renderedEntry) {
@@ -778,6 +785,12 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
       }}>Chatlogginnstillingar</Button>;
     const showWelcome = !snapshot.activeChannel && !snapshot.channels.length && snapshot.directory.ready && !snapshot.directory.error
       && !new URL(window.location.href).searchParams.has("invite") && historyState.target?.kind !== "conversation";
+    const work = owner && source && (personal || !source.is_direct) && <ChannelWork
+      key={`${owner}:${accountEpoch}:${source.id}`} api={host.channelWork} owner={owner}
+      admitted={conversationAdmitted} channelId={personal ? undefined : source.id}
+      canOpenOrigin={id => host.snapshot().channels.some(channel => channel.id === id && channel.role !== "observer")}
+      processPilot={host.processPilot} workItems={host.workItems}
+      onOpenChannel={id => host.navigateView({ kind: "conversation", channelId: id })} />;
     return createConversationViewProps(snapshot, {
     runtime: host.runtime, theme: host.theme(), view, pageKey,
     navigationFooter: <ViewHistoryControls inMenu history={host.viewHistory} snapshot={snapshot}
@@ -792,7 +805,7 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
     ownerId: owner ?? undefined,
     personalShortcut: owner && <PersonalSpaceShortcut key={`${owner}:${accountEpoch}`} active={personal && historyState.target?.kind === "conversation"}
       ready={snapshot.directory.ready} onOpen={() => host.openPersonalSpace(owner)} />,
-    personalSpace: owner ? { owner, accountKey: `${owner}:${accountEpoch}`, api: host.personalSpace,
+    personalSpace: owner ? { owner, accountKey: `${owner}:${accountEpoch}`, api: host.personalSpace, work: personal && work, onWorkChange: setSecondaryPaneOpen,
       chatKey: `${owner}:${accountEpoch}:${historyState.entryId}:${personalLatestRequest}` } : undefined,
     favorites: host.favorites,
     directoryScope: historyState.target?.kind === "directory" ? historyState.target.scope : undefined,
@@ -909,9 +922,9 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
     renderDiscussion: owner && source && !source.is_direct && !source.is_personal ? discussion => <ChannelEventBoundary
       key={`${owner}:${accountEpoch}:${source.id}`} href={event => eventHref(source.id, event.id)}>{discussion}</ChannelEventBoundary> : undefined,
     renderChannel: owner && source && !source.is_direct && !source.is_personal ? (chat, timeline, composer) => <ChannelEventSpace
-      key={`${owner}:${accountEpoch}:${source.id}`} api={host.channelEvents} owner={owner} channelId={source.id} enabled={source.events_enabled ?? false} chat={chat} composer={composer} timeline={timeline}
+      key={`${owner}:${accountEpoch}:${source.id}`} api={host.channelEvents} owner={owner} channelId={source.id} enabled={source.events_enabled ?? false} work={work} chat={chat} composer={composer} timeline={timeline}
       uploadImage={(file, progress) => host.uploadEventImage(source.id, file, progress)}
-      onTabChange={events => { eventsTabOpen = events; channelScroll.setPaused(events || workspacePageOpen); }} /> : undefined,
+      onTabChange={setSecondaryPaneOpen} /> : undefined,
     renderTimeline: owner && snapshot.activeChannel ? timeline => <ChannelTopics
       key={`${owner}:${accountEpoch}:${snapshot.activeChannel!.id}`} api={host.channelTopics} owner={owner}
       channelId={snapshot.activeChannel!.id} timeline={timeline} resetRequest={topicResetRequest} active={!pageKey && view === "detail"}

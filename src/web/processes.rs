@@ -553,13 +553,110 @@ pub(crate) async fn circle_processes(
     Query(query): Query<CircleProcessesQuery>,
     headers: HeaderMap,
 ) -> Result<axum::response::Response, axum::response::Response> {
+    process_page(
+        &state,
+        crate::process::overview::ProcessScope::ModeratedCircle(
+            crate::domain::CircleId::from_uuid(circle),
+        ),
+        query,
+        &headers,
+    )
+    .await
+}
+
+pub(crate) async fn channel_processes(
+    State(state): State<AppState>,
+    Path(channel): Path<uuid::Uuid>,
+    Query(query): Query<CircleProcessesQuery>,
+    headers: HeaderMap,
+) -> Result<axum::response::Response, axum::response::Response> {
+    process_page(
+        &state,
+        crate::process::overview::ProcessScope::Channel {
+            channel,
+            process: None,
+        },
+        query,
+        &headers,
+    )
+    .await
+}
+
+pub(crate) async fn channel_process_detail(
+    State(state): State<AppState>,
+    Path((channel, process)): Path<(uuid::Uuid, String)>,
+    Query(query): Query<WsQuery>,
+    headers: HeaderMap,
+) -> Result<axum::response::Response, axum::response::Response> {
+    use axum::http::{StatusCode, header::CACHE_CONTROL};
+    let actor = crate::web::personal_space::authenticated_user(&state, query, &headers)
+        .await?
+        .id;
+    if !process.split_once(':').is_some_and(|(kind, id)| {
+        matches!(
+            kind,
+            "process" | "pilot" | "work_review" | "work_export" | "work_status"
+        ) && uuid::Uuid::parse_str(id).is_ok()
+    }) {
+        return Err(StatusCode::BAD_REQUEST.into_response());
+    }
+    let lookup = crate::process::CircleProcessQuery {
+        scope: crate::process::overview::ProcessScope::Channel {
+            channel,
+            process: Some(process),
+        },
+        actor,
+        limit: 1,
+        all: true,
+        after: None,
+    };
+    let mut page = state
+        .processes
+        .circle_processes(lookup)
+        .await
+        .map_err(repository_response)?;
+    let mut item = page
+        .processes
+        .pop()
+        .ok_or_else(|| StatusCode::NOT_FOUND.into_response())?;
+    let connection = match item.kind.as_str() {
+        "process" => state.processes.overview_connection(),
+        "pilot" => state
+            .process_pilot
+            .as_ref()
+            .map(|pilot| pilot.overview_connection()),
+        _ => state
+            .work_items
+            .as_ref()
+            .and_then(|work| work.overview_connection()),
+    };
+    // A disabled card adapter cannot serve its detail endpoint.
+    if (item.kind == "pilot" && state.process_pilot.is_none())
+        || (item.kind.starts_with("work_") && state.work_items.is_none())
+    {
+        for step in &mut item.steps {
+            step.task = None;
+        }
+    }
+    if let Some((http, base)) = connection {
+        item.load_definition(http, base).await;
+    }
+    Ok(([(CACHE_CONTROL, "private, no-store")], Json(item)).into_response())
+}
+
+async fn process_page(
+    state: &AppState,
+    scope: crate::process::overview::ProcessScope,
+    query: CircleProcessesQuery,
+    headers: &HeaderMap,
+) -> Result<axum::response::Response, axum::response::Response> {
     use axum::http::{StatusCode, header::CACHE_CONTROL};
     let actor = crate::web::personal_space::authenticated_user(
-        &state,
+        state,
         WsQuery {
             participant: query.participant,
         },
-        &headers,
+        headers,
     )
     .await?
     .id;
@@ -570,7 +667,7 @@ pub(crate) async fn circle_processes(
     };
     let query = crate::process::CircleProcessQuery {
         actor,
-        circle: crate::domain::CircleId::from_uuid(circle),
+        scope,
         limit: query.limit.unwrap_or(20),
         all,
         after: query.after,

@@ -42,6 +42,7 @@
       import { ChannelEventsApi } from "./channel-events";
       import { ChannelTopicsApi } from "./channel-topics";
       import { ChannelReferenceApi } from "./channel-references";
+      import { ChannelWorkApi } from "./channel-work";
       import { CircleProcessApi } from "./circle-processes";
       import { ViewHistory, readViewTarget, type ViewTarget, type ViewPosition } from "./view-history";
       import { managementParent, type ManagementTarget } from "./application/management-target";
@@ -6493,6 +6494,7 @@
             }),
             imageGeneration,
             personalSpace,
+            channelWork: new ChannelWorkApi(http),
             channelEvents,
             async uploadEventImage(channelId, file, progress) {
               const response = await postMediaFile(channelId, file, file.name || "arrangement.png", progress);
