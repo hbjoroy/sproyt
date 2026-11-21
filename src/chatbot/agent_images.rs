@@ -43,11 +43,8 @@ macro_rules! plan {
 
             let config:ImageGenerationConfig=serde_json::from_str(raw).map_err(storage)?;
 
-            config.validate()?;
-
-            if config.enabled {
-
-                let identity=crate::imagegen::identity::get(&config.identity_id).ok_or(RepositoryError::Conflict)?;
+            // A missing optional portrait disables pictures, not the human's chat message.
+            if config.enabled && let Some(identity)=crate::imagegen::identity::get(&config.identity_id) {
 
                 let id=Uuid::new_v5(&Uuid::NAMESPACE_URL,format!("sproyt:agent-picture:{}:{}",$agent,$message.id.as_uuid()).as_bytes()).to_string();
 
