@@ -131,7 +131,7 @@ test("real event backend and React UI retain rich messages, RSVP, aliases, media
   await app.getByRole("button", { name: "Skriv om arrangementet", exact: true }).click();
   const composer = app.getByRole("textbox", { name: "Skriv melding", exact: true });
   await expect(app.getByRole("group", { name: "Arrangement for meldinga" })).toContainText("Oppretta i grensesnittet");
-  await composer.fill("Vi møtest ved grinda"); await composer.press("Enter");
+  await composer.fill("Vi møtest ved grinda"); await composer.press("Control+Enter");
   await expect(composer).toHaveValue("");
   await expect.poll(async () => (await (await request.get(`${path}/${secondId}/messages${a.query}`, { headers: a.headers })).json())
     .messages.some((item: { body: string }) => item.body === "Vi møtest ved grinda\n\n#arr:friluft")).toBe(true);
