@@ -5,6 +5,8 @@ set -euo pipefail
 # target binaries. /etc/apk/keys only contains the native architecture's keys.
 docker build --target media-runtime-builder --build-arg TARGETARCH=arm64 -t local/sproyt-media-runtime-arm64 .
 docker run --rm --entrypoint /bin/sh local/sproyt-media-runtime-arm64 -ec '
+  # Independently guard both the APK inventory and the installed shared objects.
+  test -z "$(find /worker-root \( -name "libssl.so*" -o -name "libcrypto.so*" -o -name "libxml2.so*" \) -print -quit)"
   test -x /worker-root/usr/bin/vipsthumbnail
   test -f /worker-root/usr/lib/libvips.so.42
   test -f /worker-root/etc/os-release
@@ -14,17 +16,15 @@ docker run --rm --entrypoint /bin/sh local/sproyt-media-runtime-arm64 -ec '
   apk --root /worker-root --no-network info -e "glib=2.90.0-r0"
   apk --root /worker-root --no-network info -e "libexpat=2.10.0-r0"
   apk --root /worker-root --no-network info -e "zlib=1.4-r0"
-  apk --root /worker-root --no-network info -e "libcrypto3>=3.5.9-r1"
-  apk --root /worker-root --no-network info -e "libssl3>=3.5.9-r1"
+  if grep -Eq "^P:(libcrypto3|libssl3|libxml2)$" /worker-root/lib/apk/db/installed; then exit 1; fi
   test -n "$(find /worker-root/usr/lib -name "*heif*.so*" -print -quit)"
 '
 docker build --target media-runtime-builder --build-arg TARGETARCH=amd64 -t local/sproyt-media-runtime .
-docker run --rm --memory=512m --cpus=1 --entrypoint /bin/sh local/sproyt-media-runtime -ec '
+docker run --rm --mount "type=bind,source=$PWD/tools/media-fixtures,target=/test-fixtures,readonly" --memory=512m --cpus=1 --entrypoint /bin/sh local/sproyt-media-runtime -ec '
   apk --root /worker-root --no-network info -e "glib=2.90.0-r0"
   apk --root /worker-root --no-network info -e "libexpat=2.10.0-r0"
   apk --root /worker-root --no-network info -e "zlib=1.4-r0"
-  apk --root /worker-root --no-network info -e "libcrypto3>=3.5.9-r1"
-  apk --root /worker-root --no-network info -e "libssl3>=3.5.9-r1"
+  if grep -Eq "^P:(libcrypto3|libssl3|libxml2)$" /worker-root/lib/apk/db/installed; then exit 1; fi
   mkdir -p /worker-root/tmp
   chroot /worker-root /usr/bin/vips black /tmp/large.v 10000 10000 --bands 3
   chroot /worker-root /usr/bin/vips jpegsave /tmp/large.v /tmp/original.jpg
@@ -58,6 +58,14 @@ docker run --rm --memory=512m --cpus=1 --entrypoint /bin/sh local/sproyt-media-r
     test "$original_hash" = "$(sha256sum /worker-root/tmp/sample.$format)"
   done
   chroot /worker-root /usr/bin/vips copy /tmp/portrait.v /tmp/plain.jpg
+  # These 12x8 FFmpeg fixtures exercise the shipped GIF and AV1 decoders
+  # independently of the encoders available to libvips.
+  for format in gif avif; do
+    cp "/test-fixtures/preview.$format" "/worker-root/tmp/preview.$format"
+    chroot /worker-root /usr/bin/vipsthumbnail "/tmp/preview.$format" --size 12x8 --output-profile srgb --output "/tmp/$format.jpg[Q=85,keep=none]"
+    test "$(chroot /worker-root /usr/bin/vipsheader -f width /tmp/$format.jpg)" = 12
+    test "$(chroot /worker-root /usr/bin/vipsheader -f height /tmp/$format.jpg)" = 8
+  done
   # Inject a tiny standard EXIF APP1 record, orientation 6, after JPEG SOI.
   head -c 2 /worker-root/tmp/plain.jpg > /worker-root/tmp/rotated.jpg
   printf "%s" "/+EAIkV4aWYAAElJKgAIAAAAAQASAQMAAQAAAAYAAAAAAAAA" | base64 -d >> /worker-root/tmp/rotated.jpg
