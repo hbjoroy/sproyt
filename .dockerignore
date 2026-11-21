@@ -9,3 +9,4 @@ packages/sproyt-ui/dist
 docs
 *.sqlite
 *.log
+assets/imagegen-characters/lotte/references/

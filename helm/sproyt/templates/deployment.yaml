@@ -177,6 +177,9 @@ spec:
             capabilities:
               drop: ["ALL"]
           volumeMounts:
+            - name: character-portraits
+              mountPath: /var/run/sproyt-identities
+              readOnly: true
             {{- if .Values.github.existingSecret }}
             - name: github-app
               mountPath: /var/run/sproyt-github
@@ -185,6 +188,13 @@ spec:
             - name: tmp
               mountPath: /tmp
       volumes:
+        - name: character-portraits
+          secret:
+            secretName: sproyt-character-portraits-v1
+            optional: true
+            items:
+              - key: lotte-v1.jpg
+                path: lotte-v1.jpg
         {{- if .Values.github.existingSecret }}
         - name: github-app
           secret:
