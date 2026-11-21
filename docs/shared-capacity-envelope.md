@@ -1,10 +1,10 @@
-# Shared capacity decision, 20 November 2026
+# Shared capacity decision, 21 November 2026
 
 Operations owns the shared budget and can defer a Sprøyt change. Chat core owns query and actor latency. Retain the shared pool, bounded actor and embedded workers. The [isolated traffic results](database-capacity-assessment-2026-11-10.md) cover hot and quiet channels, background topic work and reconnects. All six 160/s runs passed. At 320/s all six missed the targets. The production population remains the operating basis; revisit sustained queue wait, timeouts or materially different traffic before changing architecture.
 
 ## PostgreSQL allocations
 
-The instance has 100 slots, including three superuser-only and zero other reserved slots. Ordinary operations need two additional slots for intervention under load. The following amounts govern Sprøyt admission. They give other services planning allocations, without changing their role limits or asserting their owners accepted a quota.
+The instance has 140 slots, including three superuser-only slots and five reserved slots available to Authentik. Ordinary operations need two additional slots for intervention under load. The following amounts govern Sprøyt admission. They give other services planning allocations, without changing their role limits or asserting their owners accepted a quota.
 
 | Consumer and accountable function | Ordinary planning allocation | Implementation and overlap |
 | --- | ---: | --- |
@@ -15,7 +15,7 @@ The instance has 100 slots, including three superuser-only and zero other reserv
 | Grafana, observability | 10 | Configured pool 10, Recreate. Unused seats are borrowable. |
 | Remaining clients, shared database operations acting for the connected service owners | 40 pooled | Includes Isdalen, Minoa, Merchant, other Heart consumers, backup, admin and smaller clients. This is a planning line, with no per-tenant forced disconnect. |
 | Ordinary intervention reserve | 2 | Deducted at every admission. The three PostgreSQL superuser seats stay separate. |
-| Normal uncommitted after the above | 10 | Covers two old production API pods. Simultaneous canary replacement additionally requires three borrowable idle seats. |
+| Normal uncommitted after the above | 45 | Covers production and canary replacement when the live gate confirms sufficient headroom. |
 
 The normal client allocation totals 85. The measured Nov 19 peak was 97 existing clients, with zero ordinary login headroom. A peak outside the plan leads to a hold on new work. It does not revoke established user sessions. Fifteen of the sixteen non-superuser login roles had no hard role limit. An ordinary slot is consumed by any established client, including a logged-in superuser.
 
@@ -25,7 +25,7 @@ At 05:05 / 05:08 UTC on Nov 20 the operator counted 76 / 74 clients. The respect
 
 In the enabled Sprøyt Argo applications a PreSync job samples three times, five seconds apart, before backup and migrations (wave −15), and again after those hooks but before workload changes (wave −1). Use full sync for promotion and rollback. A selective sync skips Argo hooks and is outside this operating procedure.
 
-The gate uses the minimum of the configured ordinary slots and 97, subtracts existing clients other than itself, then reserves unused API/media capacity to 15, Heart to 6 and identity to 14. With an ordinary login PostgreSQL hides other roles’ backend type. The gate counts database-attached processes and ambiguous role-backed processes conservatively. As a DBA the separate [operator query](../tools/capacity-postgres-budget.sql) distinguishes client backends. In the live comparison an ordinary-role filter on backend type alone would have seen 14 clients when the DBA saw 75. The production-role query with the correct visibility reported 19 adjusted slots at its follow-up sample.
+The gate uses the minimum of the configured ordinary slots and 132, subtracts existing clients other than itself, then reserves unused API/media capacity to 15, Heart to 6 and identity to 14. With an ordinary login PostgreSQL hides other roles’ backend type. The gate counts database-attached processes and ambiguous role-backed processes conservatively. As a DBA the separate [operator query](../tools/capacity-postgres-budget.sql) distinguishes client backends. In the live comparison an ordinary-role filter on backend type alone would have seen 14 clients when the DBA saw 75. The production-role query with the correct visibility reported 19 adjusted slots at its follow-up sample.
 
 | Phase | Increment above normal, before the two-seat reserve | Why |
 | --- | ---: | --- |
