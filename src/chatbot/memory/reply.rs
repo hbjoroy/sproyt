@@ -104,7 +104,7 @@ macro_rules! sources {
 macro_rules! snapshot_tx {
     ($tx:ident,$pg:expr,$job:expr) => {{
         use sqlx::Row;
-        let row=sqlx::query(&sql("select cast(m.sender_id as text) as owner,m.body as target,cast(c.circle_id as text) as circle from circle_chat_agent_jobs j join messages m on m.id=j.source_message_id join users u on u.id=m.sender_id join channels c on c.id=j.channel_id join message_provenance v on v.message_id=m.id where j.id=?uuid and u.kind='human' and v.provenance='human' and m.deleted_at is null and m.edited_at is null",$pg)).bind(&$job.id).fetch_optional(&mut *$tx).await.map_err(storage)?;
+        let row=sqlx::query(&sql("select cast(m.sender_id as text) as owner,m.body as target,cast(c.circle_id as text) as circle from circle_chat_agent_jobs j join messages m on m.id=j.source_message_id join users u on u.id=m.sender_id join channels c on c.id=j.channel_id join message_provenance v on v.message_id=m.id where j.id=?uuid and c.circle_id is not null and u.kind='human' and v.provenance='human' and m.deleted_at is null and m.edited_at is null",$pg)).bind(&$job.id).fetch_optional(&mut *$tx).await.map_err(storage)?;
         if let Some(row)=row {
             let owner:String=row.try_get("owner").map_err(storage)?;
             let circle:String=row.try_get("circle").map_err(storage)?;

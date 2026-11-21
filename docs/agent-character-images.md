@@ -62,3 +62,12 @@ slot rollback. A separate ignored integration test uses the actual Comfy gateway
 and saves a private PNG without posting to a channel. Visual inspection can
 assess a plausible adult identity, but does not guarantee an exact apparent age
 or consistency in every later generation.
+
+## Lotte in Felles
+
+The operator can grant an agent access to an individual visible, public Felles
+channel through its channel-agent setting. A Felles job requires an explicit
+@mention in a human message. Follow-ups and handoffs cannot start it. Reading,
+image generation and publication recheck the channel scope. Private and direct
+conversations are outside this grant. Circle instances use their ordinary local
+settings and distinct agent identities.

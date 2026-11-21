@@ -1526,7 +1526,7 @@ impl CircleChatAgents {
             )
         };
         let query = format!(
-            "select {object} from circle_chat_agent_jobs j join circle_chat_agents a on a.agent_id=j.agent_id join agent_profiles p on p.agent_id=j.agent_id join users u on u.id=j.agent_id join messages m on m.id=j.source_message_id left join messages anchor on anchor.id=j.followup_anchor_message_id join users source_user on source_user.id=m.sender_id join message_provenance provenance on provenance.message_id=m.id join channels c on c.id=j.channel_id where j.id=?uuid and j.lease_token=?uuid and j.status='leased' and a.enabled=true and a.revision=j.config_revision and (j.vision_snapshot is null or a.vision_enabled=true) and c.chat_agent_access_revision=j.access_revision and p.revoked_at is null and (p.expires_at is null or p.expires_at>current_timestamp) and c.circle_id=a.circle_id and coalesce((select s.enabled from channel_chat_agent_settings s where s.channel_id=c.id and s.agent_id=a.agent_id),c.kind!='private') and m.channel_id=c.id and m.edited_at is null and m.deleted_at is null and source_user.kind='human' and provenance.provenance='human' and m.created_at>=?"
+            "select {object} from circle_chat_agent_jobs j join circle_chat_agents a on a.agent_id=j.agent_id join agent_profiles p on p.agent_id=j.agent_id join users u on u.id=j.agent_id join messages m on m.id=j.source_message_id left join messages anchor on anchor.id=j.followup_anchor_message_id join users source_user on source_user.id=m.sender_id join message_provenance provenance on provenance.message_id=m.id join channels c on c.id=j.channel_id where j.id=?uuid and j.lease_token=?uuid and j.status='leased' and a.enabled=true and a.revision=j.config_revision and (j.vision_snapshot is null or a.vision_enabled=true) and c.chat_agent_access_revision=j.access_revision and p.revoked_at is null and (p.expires_at is null or p.expires_at>current_timestamp) and {CHAT_AGENT_SCOPE} and coalesce((select s.enabled from channel_chat_agent_settings s where s.channel_id=c.id and s.agent_id=a.agent_id),c.kind!='private') and m.channel_id=c.id and m.edited_at is null and m.deleted_at is null and source_user.kind='human' and provenance.provenance='human' and m.created_at>=?"
         );
         let anchor_clause = followup::anchor_clause(pg);
         let vision_clause = vision::source_clause(pg);
@@ -1585,7 +1585,7 @@ impl CircleChatAgents {
             message
         };
         let query = format!(
-            "select {object} from messages m join circle_chat_agent_jobs j on j.channel_id=m.channel_id join circle_chat_agents a on a.agent_id=j.agent_id join agent_profiles p on p.agent_id=j.agent_id join channels c on c.id=j.channel_id where j.id=?uuid and j.lease_token=?uuid and j.status='leased' and p.revoked_at is null and (p.expires_at is null or p.expires_at>current_timestamp) and a.enabled=true and a.revision=j.config_revision and (j.vision_snapshot is null or a.vision_enabled=true) and c.chat_agent_access_revision=j.access_revision and c.circle_id=a.circle_id and coalesce((select s.enabled from channel_chat_agent_settings s where s.channel_id=c.id and s.agent_id=a.agent_id),c.kind!='private') and m.channel_id=?uuid and (coalesce(cast(m.parent_message_id as text),'')=? or m.id=j.followup_anchor_message_id) and m.deleted_at is null and m.created_at>=? and m.sequence<=?int order by m.sequence desc limit 100"
+            "select {object} from messages m join circle_chat_agent_jobs j on j.channel_id=m.channel_id join circle_chat_agents a on a.agent_id=j.agent_id join agent_profiles p on p.agent_id=j.agent_id join channels c on c.id=j.channel_id where j.id=?uuid and j.lease_token=?uuid and j.status='leased' and p.revoked_at is null and (p.expires_at is null or p.expires_at>current_timestamp) and a.enabled=true and a.revision=j.config_revision and (j.vision_snapshot is null or a.vision_enabled=true) and c.chat_agent_access_revision=j.access_revision and {CHAT_AGENT_SCOPE} and coalesce((select s.enabled from channel_chat_agent_settings s where s.channel_id=c.id and s.agent_id=a.agent_id),c.kind!='private') and m.channel_id=?uuid and (coalesce(cast(m.parent_message_id as text),'')=? or m.id=j.followup_anchor_message_id) and m.deleted_at is null and m.created_at>=? and m.sequence<=?int order by m.sequence desc limit 100"
         );
         let clause = followup::anchor_clause(pg)
             + &vision::source_clause(pg)
@@ -2031,6 +2031,10 @@ fn strip_internal_tokens(body: &str) -> String {
     out.trim().to_owned()
 }
 
+// The same scope check applies at admission, reading and publication. Felles
+// accepts only explicit operator grants on visible public channels.
+const CHAT_AGENT_SCOPE: &str = "(c.circle_id=a.circle_id or (c.circle_id is null and c.kind='public' and not c.hidden and exists(select 1 from channel_chat_agent_settings f where f.channel_id=c.id and f.agent_id=a.agent_id and f.enabled=true)))";
+
 pub(crate) async fn enqueue_postgres(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     message: &crate::domain::ChatMessage,
@@ -2101,7 +2105,7 @@ async fn enqueue_postgres_admission(
     images_enabled: bool,
     forced_target: Option<&str>,
 ) -> Result<()> {
-    let rows = sqlx::query("select cast(a.agent_id as text) agent_id,u.display_name,a.trigger_words,a.revision,a.weather,a.sea_temperature,a.ferry_port,a.vision_enabled,a.image_generation,c.chat_agent_access_revision as access_revision from circle_chat_agents a join users u on u.id=a.agent_id join agent_profiles p on p.agent_id=a.agent_id join channels c on c.circle_id=a.circle_id join users sender on sender.id=$2 where c.id=$1 and coalesce((select s.enabled from channel_chat_agent_settings s where s.channel_id=c.id and s.agent_id=a.agent_id),c.kind!='private') and sender.kind='human' and a.enabled=true and p.revoked_at is null and (p.expires_at is null or p.expires_at>current_timestamp)")
+    let rows = sqlx::query(&format!("select cast(a.agent_id as text) agent_id,u.display_name,a.trigger_words,a.revision,a.weather,a.sea_temperature,a.ferry_port,a.vision_enabled,a.image_generation,c.chat_agent_access_revision as access_revision,(c.circle_id is null) as felles from circle_chat_agents a join users u on u.id=a.agent_id join agent_profiles p on p.agent_id=a.agent_id join channels c on {CHAT_AGENT_SCOPE} join users sender on sender.id=$2 where c.id=$1 and coalesce((select s.enabled from channel_chat_agent_settings s where s.channel_id=c.id and s.agent_id=a.agent_id),c.kind!='private') and sender.kind='human' and a.enabled=true and p.revoked_at is null and (p.expires_at is null or p.expires_at>current_timestamp)"))
         .bind(*message.channel_id.as_uuid()).bind(*message.sender_id.as_uuid())
         .fetch_all(&mut **tx).await.map_err(storage)?;
     let addresses = if followups_enabled {
@@ -2124,6 +2128,16 @@ async fn enqueue_postgres_admission(
         if forced_target.is_some_and(|target| target != agent_id) {
             continue;
         }
+        let felles: bool = row.try_get("felles").map_err(storage)?;
+        if felles
+            && (forced_target.is_some()
+                || !mention::direct(
+                    message.body.as_str(),
+                    row.try_get("display_name").map_err(storage)?,
+                ))
+        {
+            continue;
+        }
         let words: String = row.try_get("trigger_words").map_err(storage)?;
         let revision: i64 = row.try_get("revision").map_err(storage)?;
         let access_revision: i64 = row.try_get("access_revision").map_err(storage)?;
@@ -2131,8 +2145,10 @@ async fn enqueue_postgres_admission(
         let weather: Option<String> = row.try_get("weather").map_err(storage)?;
         let marine: Option<String> = row.try_get("sea_temperature").map_err(storage)?;
         let mentioned = addresses.ids.contains(&agent_id);
-        let triggered =
-            forced_target.is_some() || mentioned || matches_trigger(message.body.as_str(), &words);
+        let triggered = felles
+            || forced_target.is_some()
+            || mentioned
+            || matches_trigger(message.body.as_str(), &words);
         if addresses.found && !mentioned && !triggered {
             continue;
         }
@@ -2141,7 +2157,7 @@ async fn enqueue_postgres_admission(
             .map(|id| id.as_uuid().to_string())
             .unwrap_or_default();
         let mut selected: Option<FollowupSelection> = None;
-        if followups_enabled {
+        if followups_enabled && !felles {
             let selected_raw =
                 sqlx::query_scalar::<_, String>(&sql(&followup::conversation_query(true), true))
                     .bind(&agent_id)
@@ -2191,7 +2207,8 @@ async fn enqueue_postgres_admission(
                 continue;
             }
         }
-        if forced_target.is_none()
+        if !felles
+            && forced_target.is_none()
             && triggered
             && handoffs::enabled()
             && handoffs::enqueue_postgres(tx, message, &agent_id, revision, access_revision).await?
@@ -2314,7 +2331,7 @@ async fn enqueue_sqlite_admission(
     images_enabled: bool,
     forced_target: Option<&str>,
 ) -> Result<()> {
-    let rows = sqlx::query("select a.agent_id,u.display_name,a.trigger_words,a.revision,a.weather,a.sea_temperature,a.ferry_port,a.vision_enabled,a.image_generation,c.chat_agent_access_revision as access_revision from circle_chat_agents a join users u on u.id=a.agent_id join agent_profiles p on p.agent_id=a.agent_id join channels c on c.circle_id=a.circle_id join users sender on sender.id=? where c.id=? and coalesce((select s.enabled from channel_chat_agent_settings s where s.channel_id=c.id and s.agent_id=a.agent_id),c.kind!='private') and sender.kind='human' and a.enabled=1 and p.revoked_at is null and (p.expires_at is null or p.expires_at>current_timestamp)")
+    let rows = sqlx::query(&format!("select a.agent_id,u.display_name,a.trigger_words,a.revision,a.weather,a.sea_temperature,a.ferry_port,a.vision_enabled,a.image_generation,c.chat_agent_access_revision as access_revision,(c.circle_id is null) as felles from circle_chat_agents a join users u on u.id=a.agent_id join agent_profiles p on p.agent_id=a.agent_id join channels c on {CHAT_AGENT_SCOPE} join users sender on sender.id=? where c.id=? and coalesce((select s.enabled from channel_chat_agent_settings s where s.channel_id=c.id and s.agent_id=a.agent_id),c.kind!='private') and sender.kind='human' and a.enabled=1 and p.revoked_at is null and (p.expires_at is null or p.expires_at>current_timestamp)"))
         .bind(message.sender_id.to_string()).bind(message.channel_id.to_string())
         .fetch_all(&mut **tx).await.map_err(storage)?;
     let addresses = if followups_enabled {
@@ -2337,6 +2354,16 @@ async fn enqueue_sqlite_admission(
         if forced_target.is_some_and(|target| target != agent_id) {
             continue;
         }
+        let felles: bool = row.try_get("felles").map_err(storage)?;
+        if felles
+            && (forced_target.is_some()
+                || !mention::direct(
+                    message.body.as_str(),
+                    row.try_get("display_name").map_err(storage)?,
+                ))
+        {
+            continue;
+        }
         let words: String = row.try_get("trigger_words").map_err(storage)?;
         let revision: i64 = row.try_get("revision").map_err(storage)?;
         let access_revision: i64 = row.try_get("access_revision").map_err(storage)?;
@@ -2344,8 +2371,10 @@ async fn enqueue_sqlite_admission(
         let weather: Option<String> = row.try_get("weather").map_err(storage)?;
         let marine: Option<String> = row.try_get("sea_temperature").map_err(storage)?;
         let mentioned = addresses.ids.contains(&agent_id);
-        let triggered =
-            forced_target.is_some() || mentioned || matches_trigger(message.body.as_str(), &words);
+        let triggered = felles
+            || forced_target.is_some()
+            || mentioned
+            || matches_trigger(message.body.as_str(), &words);
         if addresses.found && !mentioned && !triggered {
             continue;
         }
@@ -2354,7 +2383,7 @@ async fn enqueue_sqlite_admission(
             .map(|id| id.as_uuid().to_string())
             .unwrap_or_default();
         let mut selected: Option<FollowupSelection> = None;
-        if followups_enabled {
+        if followups_enabled && !felles {
             let selected_raw =
                 sqlx::query_scalar::<_, String>(&sql(&followup::conversation_query(false), false))
                     .bind(&agent_id)
@@ -2404,7 +2433,8 @@ async fn enqueue_sqlite_admission(
                 continue;
             }
         }
-        if forced_target.is_none()
+        if !felles
+            && forced_target.is_none()
             && triggered
             && handoffs::enabled()
             && handoffs::enqueue_sqlite(tx, message, &agent_id, revision, access_revision).await?
@@ -2497,7 +2527,11 @@ pub(crate) async fn authorize_reply_postgres(
         .await
         .map_err(storage)?
         .ok_or(RepositoryError::PermissionDenied)?;
-    let query = "select 1 from circle_chat_agent_jobs j join circle_chat_agents a on a.agent_id=j.agent_id join agent_profiles p on p.agent_id=j.agent_id join users bot on bot.id=j.agent_id join channels c on c.id=j.channel_id join messages source on source.id=j.source_message_id join users author on author.id=source.sender_id join message_provenance provenance on provenance.message_id=source.id where j.id=$1 and j.agent_id=$2 and j.channel_id=$3 and j.status='leased' and j.lease_token is not null and j.leased_until>$4 and j.leased_until>extract(epoch from clock_timestamp()) and j.reply_body=$5 and a.enabled=true and a.revision=j.config_revision and (j.vision_snapshot is null or a.vision_enabled=true) and c.chat_agent_access_revision=j.access_revision and p.revoked_at is null and (p.expires_at is null or p.expires_at>clock_timestamp()) and bot.kind='agent' and c.circle_id=a.circle_id and coalesce((select s.enabled from channel_chat_agent_settings s where s.channel_id=c.id and s.agent_id=a.agent_id),c.kind!='private') and source.channel_id=c.id and source.parent_message_id is not distinct from $6 and source.edited_at is null and source.deleted_at is null and source.created_at>$7 and source.created_at>clock_timestamp()-interval '20 minutes' and author.kind='human' and provenance.provenance='human'".to_owned() + &followup::publication_clause(true) + &observation_clause(true,true) + " for share of a";
+    let query = format!(
+        "select 1 from circle_chat_agent_jobs j join circle_chat_agents a on a.agent_id=j.agent_id join agent_profiles p on p.agent_id=j.agent_id join users bot on bot.id=j.agent_id join channels c on c.id=j.channel_id join messages source on source.id=j.source_message_id join users author on author.id=source.sender_id join message_provenance provenance on provenance.message_id=source.id where j.id=$1 and j.agent_id=$2 and j.channel_id=$3 and j.status='leased' and j.lease_token is not null and j.leased_until>$4 and j.leased_until>extract(epoch from clock_timestamp()) and j.reply_body=$5 and a.enabled=true and a.revision=j.config_revision and (j.vision_snapshot is null or a.vision_enabled=true) and c.chat_agent_access_revision=j.access_revision and p.revoked_at is null and (p.expires_at is null or p.expires_at>clock_timestamp()) and bot.kind='agent' and {CHAT_AGENT_SCOPE} and coalesce((select s.enabled from channel_chat_agent_settings s where s.channel_id=c.id and s.agent_id=a.agent_id),c.kind!='private') and source.channel_id=c.id and source.parent_message_id is not distinct from $6 and source.edited_at is null and source.deleted_at is null and source.created_at>$7 and source.created_at>clock_timestamp()-interval '20 minutes' and author.kind='human' and provenance.provenance='human'"
+    ) + &followup::publication_clause(true)
+        + &observation_clause(true, true)
+        + " for share of a";
     // Authority locks precede media locks; deadlines are checked again after any wait.
     for media_locked in [false, true] {
         let allowed: Option<i32> = sqlx::query_scalar(&query)
@@ -2537,7 +2571,10 @@ pub(crate) async fn authorize_reply_sqlite(
         .ok_or(RepositoryError::PermissionDenied)?;
     Uuid::parse_str(id).map_err(|_| RepositoryError::PermissionDenied)?;
     let parent = command.parent_message_id.map(|id| id.as_uuid().to_string());
-    let query = "select 1 from circle_chat_agent_jobs j join circle_chat_agents a on a.agent_id=j.agent_id join agent_profiles p on p.agent_id=j.agent_id join users bot on bot.id=j.agent_id join channels c on c.id=j.channel_id join messages source on source.id=j.source_message_id join users author on author.id=source.sender_id join message_provenance provenance on provenance.message_id=source.id where j.id=? and j.agent_id=? and j.channel_id=? and j.status='leased' and j.lease_token is not null and j.leased_until>? and j.leased_until>cast(strftime('%s','now') as integer) and j.reply_body=? and a.enabled=1 and a.revision=j.config_revision and (j.vision_snapshot is null or a.vision_enabled=true) and c.chat_agent_access_revision=j.access_revision and p.revoked_at is null and (p.expires_at is null or p.expires_at>current_timestamp) and bot.kind='agent' and c.circle_id=a.circle_id and coalesce((select s.enabled from channel_chat_agent_settings s where s.channel_id=c.id and s.agent_id=a.agent_id),c.kind!='private') and source.channel_id=c.id and (source.parent_message_id=? or (source.parent_message_id is null and ? is null)) and source.edited_at is null and source.deleted_at is null and source.created_at>? and author.kind='human' and provenance.provenance='human'".to_owned() + &followup::publication_clause(false) + &observation_clause(false,true);
+    let query = format!(
+        "select 1 from circle_chat_agent_jobs j join circle_chat_agents a on a.agent_id=j.agent_id join agent_profiles p on p.agent_id=j.agent_id join users bot on bot.id=j.agent_id join channels c on c.id=j.channel_id join messages source on source.id=j.source_message_id join users author on author.id=source.sender_id join message_provenance provenance on provenance.message_id=source.id where j.id=? and j.agent_id=? and j.channel_id=? and j.status='leased' and j.lease_token is not null and j.leased_until>? and j.leased_until>cast(strftime('%s','now') as integer) and j.reply_body=? and a.enabled=1 and a.revision=j.config_revision and (j.vision_snapshot is null or a.vision_enabled=true) and c.chat_agent_access_revision=j.access_revision and p.revoked_at is null and (p.expires_at is null or p.expires_at>current_timestamp) and bot.kind='agent' and {CHAT_AGENT_SCOPE} and coalesce((select s.enabled from channel_chat_agent_settings s where s.channel_id=c.id and s.agent_id=a.agent_id),c.kind!='private') and source.channel_id=c.id and (source.parent_message_id=? or (source.parent_message_id is null and ? is null)) and source.edited_at is null and source.deleted_at is null and source.created_at>? and author.kind='human' and provenance.provenance='human'"
+    ) + &followup::publication_clause(false)
+        + &observation_clause(false, true);
     // Authority locks precede media locks; deadlines are checked again after any wait.
     for media_locked in [false, true] {
         let allowed: Option<i64> = sqlx::query_scalar(&query)
@@ -3472,6 +3509,59 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(provenance, "generated");
+
+        // Reuse the real send/lease/commit path in an open Felles channel.
+        sqlx::query("update channels set circle_id=null where id=?")
+            .bind(channel.to_string())
+            .execute(&pool)
+            .await
+            .unwrap();
+        let human = UserId::new(owner.to_string()).unwrap();
+        let send = |body| {
+            chat.send_message(
+                channel_id.clone(),
+                human.clone(),
+                MessageBody::new(body).unwrap(),
+            )
+        };
+        send("@Hjelpar utan kanalval").await.unwrap();
+        assert!(service.claim().await.unwrap().is_none());
+        sqlx::query("insert into channel_chat_agent_settings(channel_id,agent_id,enabled,updated_by,updated_at) values(?,?,true,?,0)")
+            .bind(channel.to_string()).bind(first.sender_id.to_string()).bind(owner.to_string()).execute(&pool).await.unwrap();
+        send("Hjelp utan direkte omtale").await.unwrap();
+        assert!(service.claim().await.unwrap().is_none());
+        send("@Hjelpar kan du svare?").await.unwrap();
+        let felles_job = service.claim().await.unwrap().unwrap();
+        let source = service.source(&felles_job).await.unwrap().unwrap();
+        assert!(
+            !service
+                .context(&felles_job, &source)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        sqlx::query("update circle_chat_agent_jobs set reply_body=? where id=?")
+            .bind(answer)
+            .bind(&felles_job.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("update channels set hidden=true where id=?")
+            .bind(channel.to_string())
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(service.source(&felles_job).await.unwrap().is_none());
+        assert!(
+            chat.send_message_idempotent(
+                channel_id,
+                first.sender_id,
+                MessageBody::new(answer).unwrap(),
+                format!("circle-chat-agent:{}", felles_job.id)
+            )
+            .await
+            .is_err()
+        );
     }
 
     #[tokio::test]
