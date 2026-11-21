@@ -84,29 +84,11 @@ RUN cargo clean --package sproyt --package sproyt-client-core --package sproyt-p
 
 FROM ${BUILD_VARIANT}-builder AS compiled
 
-# Populate target-architecture runtime libraries using native apk. No target
-# binary or package script is executed, and Rust remains native Zig cross-built.
-# Pin fixed GLib, Expat and zlib runtimes; keep other packages on 3.24.
+# Native build tools cross-compile only the codecs used for local previews.
 FROM --platform=$BUILDPLATFORM alpine:3.24.2@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 AS media-runtime-builder
 ARG TARGETARCH
-RUN case "$TARGETARCH" in \
-      amd64) apk_arch=x86_64 ;; \
-      arm64) apk_arch=aarch64 ;; \
-      *) exit 1 ;; \
-    esac \
-    && apk add --no-cache alpine-keys=2.6-r0 \
-    && mkdir -p /worker-root/etc/apk/keys \
-    && cp /usr/share/apk/keys/"$apk_arch"/*.pub /worker-root/etc/apk/keys/ \
-    && cp -L /etc/os-release /worker-root/etc/os-release \
-    && cp -L /etc/alpine-release /worker-root/etc/alpine-release \
-    && printf '%s\n' \
-       'https://dl-cdn.alpinelinux.org/alpine/v3.24/main' \
-       'https://dl-cdn.alpinelinux.org/alpine/v3.24/community' \
-       '@glibfix https://dl-cdn.alpinelinux.org/alpine/edge/main' \
-       > /worker-root/etc/apk/repositories \
-    && apk --root /worker-root --arch "$apk_arch" --initdb --no-scripts --no-cache \
-       add vips-tools=8.18.2-r0 vips-heif=8.18.2-r0 'glib@glibfix=2.90.0-r0' 'libexpat=2.10.0-r0' 'zlib=1.4-r0' 'libarchive>=3.8.7' \
-           'libcrypto3>=3.5.9-r1' 'libssl3>=3.5.9-r1'
+COPY tools/build-media-runtime.sh /tmp/build-media-runtime.sh
+RUN sh /tmp/build-media-runtime.sh "$TARGETARCH"
 
 FROM scratch AS media-worker
 ARG VCS_REF=unknown

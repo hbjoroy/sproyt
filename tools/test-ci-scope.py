@@ -65,7 +65,8 @@ class ScopeTests(unittest.TestCase):
         self.assertEqual((result['codec'], result['operations']), ('false', 'false'))
 
     def test_codec_selection_follows_preview_and_media_runtime_dependencies(self):
-        for path in ('src/media_store/preview.rs', 'src/media_worker.rs', 'tools/verify-media-runtime.sh'):
+        for path in ('src/media_store/preview.rs', 'src/media_worker.rs', 'tools/build-media-runtime.sh',
+                     'tools/verify-media-runtime.sh', 'tools/media-fixtures/preview.gif', 'tools/media-fixtures/preview.avif'):
             self.assertEqual(ci_scope.scope([path])['codec'], 'true', path)
 
     def test_standalone_operator_and_codec_contracts_keep_distinct_gates(self):

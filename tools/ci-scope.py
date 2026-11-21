@@ -45,7 +45,8 @@ HEART_DELIVERY = {'helm/sproyt/templates/heart.yaml', 'helm/sproyt/templates/hea
                   'helm/sproyt/templates/heart-definition-job.yaml', 'tools/verify-heart-rollout-budget.py',
                   'tools/test-heart-rollout-budget.py', 'tools/requirements-heart-rollout-tests.txt',
                   'tools/heart-rollout-probe.mjs'}
-CODEC_TOOLS = {'tools/verify-media-runtime.sh'}
+CODEC_TOOLS = {'tools/build-media-runtime.sh', 'tools/verify-media-runtime.sh',
+               'tools/media-fixtures/preview.gif', 'tools/media-fixtures/preview.avif'}
 RECOVERY_TOOLS = {'tools/seed-media-recovery.sql', 'tools/verify-media-recovery.sql',
                   'tools/reset-agent-memory-after-restore.sql'}
 BACKEND_PREFIXES = ('src/', 'crates/', 'migrations/')
