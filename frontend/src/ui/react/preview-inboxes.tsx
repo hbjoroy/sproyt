@@ -1,3 +1,4 @@
+import { messageExcerpt } from "../../message-excerpt";
 import { Button, Status, TextField } from "@sproyt/ui/react";
 import { useEffect, useRef, useState } from "react";
 import { DestinationPage } from "./workspace-page";
@@ -55,7 +56,7 @@ function MentionRow({ mention, host, onTaskCreated, onOpenSource, context }: {
   };
   return <article className="sp-inbox-entry">
     <p className="sp-inbox-entry-meta">{context} · {mention.message.sender_display_name} · {new Date(mention.message.sent_at).toLocaleString("nn-NO", { dateStyle: "short", timeStyle: "short" })} · {mention.read ? "Lesen" : "Ulest"}</p>
-    <p className="sp-inbox-excerpt">{mention.message.body}</p>
+    <p className="sp-inbox-excerpt">{messageExcerpt(mention.message.body)}</p>
     <div className="sp-inbox-entry-actions">
       <Button variant="quiet" onClick={onOpenSource ?? (() => host.openMentionSource(mention))}>Opne kjelda</Button>
       {!mention.read && <Button variant="quiet" busy={busy === "read"}

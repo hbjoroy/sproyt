@@ -1,3 +1,4 @@
+import { messageExcerpt } from "../../message-excerpt";
 import { useLayoutEffect, useRef } from "react";
 import type { ReactNode } from "react";
 import { Status, ThreadPane } from "@sproyt/ui/react";
@@ -102,7 +103,7 @@ export function createConversationViewProps(snapshot: ConversationSnapshot, host
         // Notification subscriptions are not a mute policy. Do not map disabled
         // notifications to the library's `muted` appearance.
         conversations: group.conversations.map(item => ({ id: item.id, name: item.name, unread: item.unread,
-          excerpt: item.channel.latest_excerpt, directActivity: item.channel.direct_activity, hidden: item.channel.hidden,
+          excerpt: item.channel.latest_excerpt && messageExcerpt(item.channel.latest_excerpt), directActivity: item.channel.direct_activity, hidden: item.channel.hidden,
           directGroup: !!item.channel.is_direct && !item.channel.direct_user_id,
           action: host.renderConversationAction?.(item) })),
         actions: host.renderGroupActions?.(group)
