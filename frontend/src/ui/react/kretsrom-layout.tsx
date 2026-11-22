@@ -1,7 +1,7 @@
 import { createContext, useEffect, useState, type ReactNode } from "react";
 import { KretsromShell } from "@sproyt/ui/react";
 
-export const KretsromContext = createContext<{ tabs: HTMLDivElement | null; workshop: HTMLDivElement | null } | null>(null);
+export const KretsromContext = createContext<{ title: string; tabs: HTMLDivElement | null; workshop: HTMLDivElement | null } | null>(null);
 
 interface Props {
   view: "list" | "detail";
@@ -33,7 +33,8 @@ export function KretsromLayout(props: Props) {
     tabs.addEventListener("click", closeAfterSelection);
     return () => tabs.removeEventListener("click", closeAfterSelection);
   }, [tabs]);
-  return <KretsromContext.Provider value={{ tabs, workshop }}>
+  const title = props.title.replace(/^# /, "#");
+  return <KretsromContext.Provider value={{ title, tabs, workshop }}>
     <KretsromShell view={props.view} masthead={props.masthead} directory={props.directory}
       roomHeader={props.showRoom && <header className="kr-room-header">
         <button type="button" className="kr-back" onClick={props.onBack}>‹ {props.backLabel}</button>
@@ -44,7 +45,7 @@ export function KretsromLayout(props: Props) {
           }
         }}>
           <summary aria-label={`Samtaleval for ${props.title}`}>
-            {props.context && <strong>{props.context}</strong>}<span className="kr-room-title">{props.title}</span>
+            {props.context && <strong>{props.context}</strong>}<span className="kr-room-title">{title}</span>
           </summary>
           <div className="kr-room-menu">
             <div ref={setTabs} />

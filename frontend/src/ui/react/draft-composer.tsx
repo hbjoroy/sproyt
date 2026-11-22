@@ -5,7 +5,7 @@ import { useContext, useEffect, useId, useLayoutEffect, useRef, useState, type C
 /** Application-owned composition keeps attachments and text in one draft.
  * The library's visual vocabulary is retained; tools open only on request. */
 export function DraftComposer({ value, onChange, onSend, label, leading, tools,
-  toolsLabel = "Skriveverktøy", placeholder = "Skriv ei melding …", hint,
+  toolsLabel = "Skriveverktøy", placeholder, hint,
   disabled = false, busy = false, error, sendOnEnter = false,
   hasAttachments = false }: ComponentProps<typeof Composer> & { hasAttachments?: boolean }) {
   const kretsrom = useContext(KretsromContext);
@@ -60,7 +60,7 @@ export function DraftComposer({ value, onChange, onSend, label, leading, tools,
     if (!disabled && !busy && (value.trim() || hasAttachments)) onSend(value.trim());
   };
   const fieldElement = <textarea ref={field} id={id} className="sp-textarea" rows={1} value={value}
-      onChange={event => onChange(event.currentTarget.value)} placeholder={placeholder}
+      onChange={event => onChange(event.currentTarget.value)} placeholder={placeholder ?? (kretsrom ? `Skriv i ${kretsrom.title} …` : "Skriv ei melding …")}
       disabled={disabled || busy} aria-describedby={`${id}-help`} aria-invalid={Boolean(error) || undefined}
       onKeyDown={event => {
         if (event.key === "Enter" && !event.nativeEvent.isComposing && event.keyCode !== 229

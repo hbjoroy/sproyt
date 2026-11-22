@@ -65,7 +65,7 @@
 .kr-directory .sp-product-nav-tabs { order: 0; }
 .kr-directory [data-directory-options=false] :is(.kr-search,.sp-product-nav-tabs,.sp-product-nav-pin,.sp-product-nav-group-actions,.sp-conversation-actions,.sp-product-nav-guide,.sp-product-nav-footer) { display: none; }
 .kr-directory .sp-product-navigation { gap: 0; padding: 6px 8px 12px; }
-.kr-directory .sp-product-nav-heading .sp-product-nav-disclosure { padding: 4px 6px; gap: 8px; font: 600 15px "Segoe UI",sans-serif; }
+.kr-directory .sp-product-nav-heading .sp-product-nav-disclosure { padding: 4px 6px; gap: 5px; font: 600 15px "Segoe UI",sans-serif; }
 .kr-directory .sp-conversations { gap: 0; }
 .kr-directory .sp-conversation-row { display: flex; align-items: center; border: 0; }
 .kr-directory .sp-conversation-row .sp-conversation {
@@ -81,3 +81,6 @@
   .kr-shell[data-view] .kr-directory { display: block; border-inline-end: 1px solid var(--sp-line); }
   .kr-shell .kr-back { display: none; }
 }
+
+.kr-directory .sp-product-nav-heading .sp-product-nav-chevron { width: 9px; }
+.kr-directory .sp-badge { min-width: 16px; padding-inline: 2px; }

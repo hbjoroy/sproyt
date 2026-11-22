@@ -240,7 +240,7 @@ export function PreviewComposer({ host, target }: {
       }
     }}>
     <style>{eventContextCss}</style>
-    <DraftComposer hasAttachments={state.media.length > 0} label={target.parentMessageId ? "Svar i tråden" : "Skriv melding"}
+    <DraftComposer placeholder={target.parentMessageId ? "Svar i tråden …" : undefined} hasAttachments={state.media.length > 0} label={target.parentMessageId ? "Svar i tråden" : "Skriv melding"}
       value={state.value} onChange={value => {
         const field = input();
         if (field) updateSelection(field);
