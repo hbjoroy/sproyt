@@ -1,3 +1,4 @@
+import { rememberReaction } from "../../reaction-choices";
 import { Button, Dialog, Status } from "@sproyt/ui/react";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
@@ -95,8 +96,8 @@ export function PreviewReactionActions({ message, open, primaryAction, overflowA
 }
 
 /** Reaction counts, participant details and failures remain host-owned. */
-export function PreviewMessageReactions({ message, host }: {
-  message: ChatMessage; host: PreviewReactionHost;
+export function PreviewMessageReactions({ message, host, owner }: {
+  message: ChatMessage; host: PreviewReactionHost; owner?: string | null;
 }) {
   if (message.deleted_at) return null;
   const reactions = host.reactions(message.id).filter(reaction => reaction.count > 0);
@@ -104,12 +105,15 @@ export function PreviewMessageReactions({ message, host }: {
   if (!reactions.length && !error) return null;
   return <div className="sp-message-reaction-row">
     {reactions.map(reaction => <ReactionBadge key={reaction.emoji} reaction={reaction}
-      onPointerDown={keepPointerTarget} onToggle={() => host.toggleReaction(message.id, reaction.emoji)} />)}
+      onPointerDown={keepPointerTarget} onToggle={() => {
+        if (owner && !reaction.reactedByMe) rememberReaction(owner, reaction.emoji);
+        host.toggleReaction(message.id, reaction.emoji);
+      }} />)}
     {error && <Status tone="error">{error}</Status>}
   </div>;
 }
 
-export function createPreviewReactionPicker(host: PreviewReactionHost) {
+export function createPreviewReactionPicker(host: PreviewReactionHost, currentOwner: () => string | null) {
   let close: (() => void) | undefined;
   let activeDialog: Element | null | undefined;
   return {
@@ -121,9 +125,14 @@ export function createPreviewReactionPicker(host: PreviewReactionHost) {
       // invocations the same visible focus-return target as keyboard activation.
       const control = anchor.matches("button") ? anchor : anchor.querySelector("button");
       if (control instanceof HTMLElement) control.focus({ preventScroll: true });
+      const owner = anchor.closest(".kr-shell") ? currentOwner() : null;
       close = openEmojiPicker(anchor, host.savedEmojis, {
         title: "Reager på meldinga", closeLabel: "Lukk reaksjonsveljaren",
-        onSelect: emoji => host.toggleReaction(message.id, emoji)
+        owner,
+        onSelect: emoji => {
+          if (owner && !host.reactions(message.id).some(item => item.emoji === emoji && item.reactedByMe)) rememberReaction(owner, emoji);
+          host.toggleReaction(message.id, emoji);
+        }
       });
       // The starter picker has a single selected value; Sprøyt permits several.
       // Refresh every rendered choice, including after expanding/searching.
@@ -132,6 +141,7 @@ export function createPreviewReactionPicker(host: PreviewReactionHost) {
       if (!dialog) return;
       const sync = () => {
         const selected = new Set(host.reactions(message.id).filter(item => item.reactedByMe).map(item => item.emoji));
+        if (dialog.getAttribute("data-pinning") === "true") return;
         dialog.querySelectorAll(".sp-emoji").forEach(button => button.setAttribute("aria-pressed", String(selected.has(button.textContent ?? ""))));
       };
       sync();

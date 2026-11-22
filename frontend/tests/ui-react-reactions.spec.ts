@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { expect, test, type Page } from "@playwright/test";
 
 test("incoming reactions refresh the open channel without navigation", async ({ page }) => {
@@ -143,4 +144,36 @@ test("React reaction failure leaves server badges intact and can be retried", as
   await preview.getByRole("dialog", { name: "Reager på meldinga" }).getByRole("button", { name: "Tommel opp, ja, bra" }).click();
   await expect(message.getByRole("button", { name: "👍: 1 reaksjonar" })).toHaveAttribute("aria-pressed", "true");
   await expect(message).not.toContainText("Reaksjonen vart avvist i prøva");
+});
+
+test("Kretsrom shows saved choices first and keeps counts beside the message actions", async ({ page }) => {
+  const bundle = await readFile(new URL("../dist/app.js", import.meta.url));
+  await page.route(/\/assets\/app\/[^/]+\/app.js$/, route => route.fulfill({ contentType: "text/javascript", body: bundle }));
+  await page.addInitScript(() => localStorage.setItem("sproyt.design.kretsrom.v1", "on"));
+  await page.route("**/api/v1/me/emojis*", route => route.fulfill({ json: ["🛶", "🍻"] }));
+  await page.goto(`/?participant=kretsrom-reactions-${Date.now()}&ui=react`);
+  const pane = page.locator(".kr-shell .sp-channel-pane");
+  const composer = pane.getByRole("textbox", { name: "Skriv melding" });
+  const body = `Reaksjonar i Kretsrom ${Date.now()}`;
+  await composer.fill(body);
+  await composer.press("Control+Enter");
+  const message = pane.locator("[data-message-id]").filter({ hasText: body });
+  const add = message.getByRole("button", { name: "Legg til reaksjon", exact: true });
+  await add.click();
+  const picker = page.getByRole("dialog", { name: "Reager på meldinga" });
+  const choices = picker.locator(":scope > .sp-emoji-grid button");
+  await expect(choices).toHaveCount(6);
+  await expect(choices.first()).toHaveText("🛶");
+  await expect(choices.nth(1)).toHaveText("🍻");
+  await picker.getByRole("button", { name: "Skål" }).click();
+  const badge = message.getByRole("button", { name: "🍻: 1 reaksjonar" });
+  await expect(badge).toHaveAttribute("aria-pressed", "true");
+  const [chip, action, reply] = await Promise.all([badge.boundingBox(), add.boundingBox(), message.getByRole("button", { name: "Svar i tråd", exact: true }).boundingBox()]);
+  for (const box of [action!, reply!]) expect(Math.abs(chip!.y + chip!.height / 2 - box.y - box.height / 2)).toBeLessThan(5);
+  await add.click();
+  await picker.getByRole("button", { name: "Fleire", exact: true }).click();
+  await expect(picker.getByRole("button", { name: "Fest reaksjonar" })).toBeVisible();
+  await expect(picker.getByRole("searchbox")).toBeVisible();
+  await picker.getByRole("button", { name: "Lukk reaksjonsveljaren" }).click();
+  await expect(add).toBeFocused();
 });

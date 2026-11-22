@@ -1,18 +1,34 @@
+import { reactionChoices } from "../../reaction-choices";
 import { openReactionPicker, reactionEmoji } from "@sproyt/ui/react";
 import type { SavedEmojiApi } from "../../saved-emojis";
 
 /** App-owned additions to the shared native popup, retaining its keyboard and focus contract. */
 export function openEmojiPicker(anchor: HTMLElement, api: SavedEmojiApi, options: {
-  title: string; closeLabel?: string; onSelect: (emoji: string) => void;
+  title: string; owner?: string | null; closeLabel?: string; onSelect: (emoji: string) => void;
 }): () => void {
-  const close = openReactionPicker(anchor, { ...options, searchLabel: "Finn emoji",
-    items: [...reactionEmoji, ["😀", "Stort smil, glad"]] });
-  const dialog = anchor.closest(".sp-theme")?.querySelector<HTMLDialogElement>(".sp-reaction-picker");
-  if (!dialog) return close;
-  dialog.classList.add("sp-personal-emoji-picker");
   let emojis: string[] = [];
   let managing = false;
   let pending = false;
+  let loaded = false;
+  const owner = options.owner;
+  let choices = owner ? reactionChoices(owner, []) : [];
+  const close = openReactionPicker(anchor, { ...options, searchLabel: "Finn emoji",
+    items: [...reactionEmoji, ["😀", "Stort smil, glad"]],
+    ...(owner && {
+      moreLabel: "Fleire", lessLabel: "Færre", getItems: () => choices, keepOpen: () => managing,
+      onSelect: (emoji: string) => {
+        if (!managing) options.onSelect(emoji);
+        else if (!pending && loaded) void changePin(emoji);
+      },
+    }),
+  });
+  const dialog = anchor.closest(".sp-theme")?.querySelector<HTMLDialogElement>(".sp-reaction-picker");
+  if (!dialog) return close;
+  dialog.classList.add("sp-personal-emoji-picker");
+  if (owner) {
+    dialog.classList.add("kr-reaction-picker");
+    dialog.querySelector(".sp-reaction-head button")!.textContent = "Lukk";
+  }
   const section = document.createElement("section");
   section.className = "sp-saved-emojis";
   section.setAttribute("aria-label", "Lagra emoji");
@@ -34,16 +50,52 @@ export function openEmojiPicker(anchor: HTMLElement, api: SavedEmojiApi, options
   section.append(head, grid, notice, retry);
   dialog.querySelector(".sp-reaction-head")?.after(section);
   const search = dialog.querySelector<HTMLInputElement>('input[type="search"]');
+  const more = dialog.querySelector<HTMLButtonElement>(".sp-reaction-more");
+  const catalog = dialog.querySelector<HTMLElement>(":scope > .sp-emoji-grid");
+  const expanded = () => more?.getAttribute("aria-expanded") === "true";
+  const pane = anchor.closest(".sp-thread-pane, .sp-channel-pane");
+  const composer = pane?.querySelector(".sp-draft-composer");
   const position = () => {
     if (!dialog.isConnected) return;
     const viewport = window.visualViewport;
     const top = (viewport?.offsetTop ?? 0) + 12;
     const bottom = (viewport?.offsetTop ?? 0) + (viewport?.height ?? innerHeight) - 12;
     const bounds = dialog.getBoundingClientRect();
+    if (owner && pane) {
+      const room = pane.getBoundingClientRect();
+      const left = (viewport?.offsetLeft ?? 0) + 12;
+      const right = left + (viewport?.width ?? innerWidth) - 24;
+      dialog.style.setProperty("--kr-picker-width", Math.min(420, room.width - 24, right - left) + "px");
+      dialog.style.setProperty("--kr-picker-x", Math.max(left, Math.min(room.left + 12, right - bounds.width)) + "px");
+      const floor = Math.min(bottom, composer?.getBoundingClientRect().top ?? room.bottom);
+      dialog.style.setProperty("--kr-picker-y", Math.max(top, floor - bounds.height - 8) + "px");
+      return;
+    }
     if (bounds.bottom > bottom) dialog.style.top = `${Math.max(top, bottom - bounds.height)}px`;
   };
   const draw = () => {
     if (!dialog.isConnected) return;
+    if (owner) {
+      dialog.dataset.expanded = String(expanded());
+      if (!expanded()) managing = false;
+      dialog.dataset.pinning = String(managing);
+      manage.hidden = !expanded();
+      manage.disabled = pending || !loaded;
+      manage.textContent = managing ? "Ferdig" : "Fest reaksjonar";
+      manage.setAttribute("aria-label", manage.textContent);
+      manage.setAttribute("aria-pressed", String(managing));
+      close.refresh();
+      for (const item of catalog?.querySelectorAll<HTMLButtonElement>("button") ?? []) {
+        if (managing) {
+          const pinned = emojis.includes(item.textContent ?? "");
+          item.setAttribute("aria-pressed", String(pinned));
+          item.setAttribute("aria-label", (pinned ? "Løys " : "Fest ") + item.textContent);
+          item.disabled = pending;
+        }
+      }
+      position();
+      return;
+    }
     grid.replaceChildren();
     manage.disabled = pending || !emojis.length;
     const query = search?.value.toLocaleLowerCase() ?? "";
@@ -58,6 +110,21 @@ export function openEmojiPicker(anchor: HTMLElement, api: SavedEmojiApi, options
     }
     position();
   };
+  async function changePin(emoji: string) {
+    if (!owner) return;
+    const save = !emojis.includes(emoji);
+    pending = true;
+    notice.textContent = "";
+    draw();
+    try {
+      await api.save(emoji, save);
+      if (!dialog?.isConnected) return;
+      emojis = save ? [...emojis, emoji] : emojis.filter(item => item !== emoji);
+      choices = reactionChoices(owner, emojis);
+    } catch (failure) {
+      notice.textContent = "Kunne ikkje endre festa reaksjonar: " + emojiErrorMessage(failure);
+    } finally { pending = false; draw(); }
+  }
   manage.onclick = () => {
     managing = !managing;
     manage.setAttribute("aria-pressed", String(managing));
@@ -77,13 +144,13 @@ export function openEmojiPicker(anchor: HTMLElement, api: SavedEmojiApi, options
   const load = async () => {
     retry.hidden = true;
     notice.textContent = "Hentar lagra emoji …";
-    try { emojis = await api.list(); notice.textContent = emojis.length ? "" : "Lim inn ein eigen emoji for å lagre han her."; draw(); }
+    try { emojis = await api.list(); loaded = true; if (owner) choices = reactionChoices(owner, emojis); notice.textContent = owner || emojis.length ? "" : "Lim inn ein eigen emoji for å lagre han her."; draw(); }
     catch (error) { notice.textContent = `Kunne ikkje hente lagra emoji: ${emojiErrorMessage(error)}`; retry.hidden = false; }
     position();
   };
   retry.onclick = () => { void load(); };
   search?.addEventListener("input", draw);
-  const more = dialog.querySelector(".sp-reaction-more");
+
   // Collapsing the native catalog clears search without emitting an input event.
   more?.addEventListener("click", draw);
   const custom = document.createElement("details");
@@ -129,7 +196,15 @@ export function openEmojiPicker(anchor: HTMLElement, api: SavedEmojiApi, options
   form.append(label, submit);
   custom.append(disclosure, form, useOnly, error);
   dialog.append(custom);
+  const resize = owner ? new ResizeObserver(position) : null;
+  resize?.observe(dialog);
+  if (pane) resize?.observe(pane);
+  if (composer) resize?.observe(composer);
+  if (owner) window.visualViewport?.addEventListener("resize", position);
+  draw();
   dialog.addEventListener("close", () => {
+    resize?.disconnect();
+    window.visualViewport?.removeEventListener("resize", position);
     search?.removeEventListener("input", draw);
     more?.removeEventListener("click", draw);
   }, { once: true });

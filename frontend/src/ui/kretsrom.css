@@ -84,3 +84,29 @@
 
 .kr-directory .sp-product-nav-heading .sp-product-nav-chevron { width: 9px; }
 .kr-directory .sp-badge { min-width: 16px; padding-inline: 2px; }
+
+.kr-footer .kr-reactions, .kr-footer .sp-message-reaction-row { display: contents; }
+.kr-footer .kr-actions { align-items: center; }
+.kr-footer .sp-reaction-badge-wrap > .sp-button {
+  min-height: 32px; border: 1px solid var(--sp-line); border-radius: 20px;
+  padding: 3px 8px; font: 12px/1.4 "Segoe UI",sans-serif; background: var(--sp-chrome);
+}
+.kr-footer .sp-reaction-badge-wrap > [aria-pressed=true] { background: var(--sp-accent); color: var(--sp-on-accent); }
+@media (pointer: coarse) {
+  .kr-footer .sp-reaction-badge-wrap > .sp-button { min-width: 44px; min-height: 44px; }
+}
+.kr-reaction-picker.sp-reaction-picker {
+  left: var(--kr-picker-x) !important; top: var(--kr-picker-y) !important; box-sizing: border-box;
+  width: var(--kr-picker-width, min(420px, calc(100vw - 24px))); border: 1px solid var(--sp-line); border-radius: 16px;
+  background: var(--sp-canvas); box-shadow: 0 8px 28px #14251d24;
+}
+.kr-reaction-picker .sp-reaction-head .sp-kicker { font: 600 14px/1.4 "Segoe UI",sans-serif; letter-spacing: normal; text-transform: none; }
+.kr-reaction-picker .sp-reaction-head button, .kr-reaction-picker .sp-saved-emoji-head .sp-button {
+  width: auto; padding-inline: 8px; border: 0; background: transparent; font-size: 13px;
+}
+.kr-reaction-picker .sp-emoji-grid { display: flex; flex-wrap: wrap; }
+.kr-reaction-picker .sp-emoji { width: 44px; height: 44px; border-radius: 9px; }
+.kr-reaction-picker .sp-saved-emojis { padding: 0; margin: 0; border: 0; }
+.kr-reaction-picker .sp-saved-emoji-head > strong, .kr-reaction-picker .sp-saved-emoji-grid,
+.kr-reaction-picker[data-expanded=false] .sp-custom-reaction, .kr-reaction-picker .sp-help:empty { display: none; }
+.kr-reaction-picker .sp-reaction-more { margin: 0; border: 0; width: auto; padding-inline: 8px; }

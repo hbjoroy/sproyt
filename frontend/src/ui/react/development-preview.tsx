@@ -593,7 +593,7 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
   }
   let memberFocus: { owner: string; channelId: string; historyEntryId: string } | null = null;
   let threadFocus: { owner: string | null; messageId: string; element: HTMLElement } | null = null;
-  const reactionPicker = createPreviewReactionPicker(host);
+  const reactionPicker = createPreviewReactionPicker(host, () => host.community.selfId());
   const placeDiscovery = new AgentPlaceDiscovery(host.agentPlaceLookup, () => update());
   const channelReferenceDiscovery = new ChannelReferenceDiscovery(host.channelReferences, () => update());
   const restorePosition = (key: string) => host.appUpdate.resumePosition(host.processPilotIdentity(), key);
@@ -955,24 +955,30 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
       earlyAdopter: message => Boolean(host.settings.profileFor?.(message.sender_id)?.early_adopter),
       renderAuthorStatus: message => <MessageProfileStatus host={host.settings} userId={message.sender_id} own={host.isOwnMessage(message)} />,
       messageStatus: host.messageStatus,
-      renderReactions: message => <PreviewMessageReactions message={message} host={host} />,
+      renderReactions: message => <PreviewMessageReactions message={message} host={host} owner={kretsrom ? owner : null} />,
       onReactionRequest: reactionPicker.open,
       renderActions: (message, context) => {
         if (message.deleted_at) return !context?.threadParent && snapshot.timeline.retainedDeletedRootIds.includes(message.id)
           ? <Button variant="quiet" data-thread-trigger={message.id} onClick={event => openMessageThread(message.id, event.currentTarget)}>Opne tråd</Button>
           : null;
-        const replies = snapshot.threadSummaries.find(summary => summary.root_message_id === message.id)?.reply_count ?? 0;
+        const threadSummary = snapshot.threadSummaries.find(summary => summary.root_message_id === message.id);
+        const replies = threadSummary?.reply_count ?? 0;
+        const countedReply = kretsrom && replies > 0;
+        const replyLabel = countedReply ? snapshot.threadSummaryStatus.ready ? replies + " svar" : "Opne tråd" : "Svar";
+        const unread = countedReply && snapshot.threadSummaryStatus.ready ? threadSummary?.unread_count ?? 0 : 0;
+        const unreadLabel = unread === 1 ? "1 ulest" : unread + " uleste";
         const isRoot = message.parent_message_id === null && !context?.threadParent;
         const threadAction = isRoot ? <Button className="sp-message-symbol" variant="quiet"
-          aria-label="Svar i tråd" title="Svar i tråd"
+          aria-label={countedReply ? "Opne tråd, " + replyLabel + (unread ? ", " + unreadLabel : "") : "Svar i tråd"} title="Svar i tråd"
           data-thread-trigger={message.id} aria-expanded={snapshot.thread?.rootMessageId === message.id}
           onPointerDown={event => { if (event.pointerType === "mouse" && event.button === 0) event.preventDefault(); }}
-          onClick={event => openMessageThread(message.id, event.currentTarget)}><ThreadIcon /><span className="sp-kretsrom-action-label">Svar</span></Button> : null;
+          onClick={event => openMessageThread(message.id, event.currentTarget)}>{!kretsrom && <ThreadIcon />}<span className="sp-kretsrom-action-label">{replyLabel}</span>
+            {unread > 0 && <span className="sp-thread-unread">{unreadLabel}</span>}</Button> : null;
         return <MessageActions message={message} host={host} openReaction={reactionPicker.open}
           threadAction={threadAction} threadHasReplies={replies > 0} openThread={isRoot ? () => openMessageThread(message.id) : undefined} />;
       },
       renderThreadSummary: message => {
-        if (message.parent_message_id !== null) return null;
+        if (message.parent_message_id !== null || (kretsrom && !message.deleted_at)) return null;
         const summary = snapshot.threadSummaries.find(item => item.root_message_id === message.id);
         if (!summary?.reply_count) return null;
         // Refreshing after a deletion temporarily invalidates the old counts.

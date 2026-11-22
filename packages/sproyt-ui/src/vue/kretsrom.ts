@@ -24,8 +24,8 @@ export const KretsromMessage = defineComponent({
         h("header", { class: "kr-byline" }, [slots.author?.() ?? h("strong", props.author),
           h("time", { class: "sp-time", datetime: props.dateTime }, props.time), props.status && h("small", props.status)]),
         h("div", { class: "kr-body" }, slots.default?.()),
-        h("div", { class: "kr-reactions" }, slots.reactions?.()),
-        h("div", { class: "kr-actions" }, slots.actions?.())
+        h("div", { class: "kr-footer" }, [h("div", { class: "kr-reactions" }, slots.reactions?.()),
+          h("div", { class: "kr-actions" }, slots.actions?.())])
       ])
     ]);
   }

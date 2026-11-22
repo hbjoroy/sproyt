@@ -16,8 +16,9 @@ Designsystem 0.2.1 har ei eiga stilfil for referansen. [Bygg og prøv prototypen
 | --- | --- |
 | Innarbeidd | Tydeleg kretsnamn ved sida av kanalnamnet, samanhengande kanalgruppe, samanleggbare kretsar og «Skjulte kanalar». Bølgjesnarveg og synleg retur til kretsane på mobil. Rolegare meldingsrad, dato og ulestmarkør på same rad når dei fell saman. |
 | Innarbeidd | Ein skjult bileteverkstad med ei aktiv eller ferdig bestilling kan opnast frå skrivefeltet i opphavssamtalen. Verkstaden opnar som sidepanel på stor skjerm og ark nedst på mobil. Eksisterande privat gjennomgang og godkjenning styrer vedlegget. |
+| Innarbeidd | Under meldinga deler reaksjonar, Reager og svar same rad. Fleire opnar søk, eigne emojiar og Fest reaksjonar. Festa val følgjer kontoen. Vane og siste bruk blir hugsa per konto på denne eininga, med éi røyst per bruksdag dei siste 90 dagane. |
 | Prøvd i prototype | Grupperte meldingar frå same ven, trådsitat ved kladden, og mediefliser. |
-| Ope | Korleis finne biletebestillingar frå andre kretsar. Korleis vise direktemeldingar, omtalar og ferdige bilete samstundes. Feste reaksjonar og balansere bruk gjennom fleire veker mot nyleg bruk. |
+| Ope | Korleis finne biletebestillingar frå andre kretsar. Korleis vise direktemeldingar, omtalar og ferdige bilete samstundes.  |
 | Importert | Alle andre flater og interaksjonar kjem frå den redaksjonelle utgåva. Det omfattar mellom anna Arbeid, arrangement, agentoppsett, medlemskap, innboks, innstillingar, reaksjonsveljar og handtering av opplastingar. |
 
 **Importert** er status i designarbeidet. Ein importert komponent brukar dei same kjeldetypane, tilgangssjekkane og handlingane som før. Når ei flate vert vurdert, kan ein ta henne inn i Kretsrom slik ho er, eller tilpasse henne. Oppdater rada når endringa kan prøvast i sjølve appen.
