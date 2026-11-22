@@ -1,3 +1,5 @@
+import { createPortal } from "react-dom";
+import { KretsromContext } from "./kretsrom-layout";
 import { createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { navigateTabList } from "./tab-navigation";
 import { Button, Status } from "@sproyt/ui/react";
@@ -81,6 +83,7 @@ export function ChannelEventSpace({ api, owner, channelId, enabled: channelEnabl
   const [editing, setEditing] = useState<ChannelEvent | "new" | null>(null);
   const [filter, setFilter] = useState<string | null>(null);
   const root = useRef<HTMLDivElement>(null);
+  const kretsrom = useContext(KretsromContext);
   const id = useId();
   const current = useRef(true);
   const previousEnabled = useRef(enabled);
@@ -177,10 +180,7 @@ export function ChannelEventSpace({ api, owner, channelId, enabled: channelEnabl
   const summaryLabel = ["Arrangement", upcoming === undefined ? (summaryError ? "tal ukjent, kunne ikkje oppdaterast" : "tal ukjent") : `${upcoming} komande arrangement`,
     summary?.ongoing_count ? `${summary.ongoing_count} pågåande arrangement` : "", attention ? `${attention} arrangement endra` : "", summaryError && summary ? "kunne ikkje oppdaterast" : ""].filter(Boolean).join(", ");
   const activeFilter = enabled ? filter : null;
-  return <EventReferencesContext.Provider value={{ events: referenceEvents, collect, search: referencesAllowed ? search : undefined, suggest: referencesAllowed ? suggest : undefined, href: event => eventHref(channelId, event.id), open }}>
-    <style>{css}</style>
-    <div className="sp-channel-events" ref={root}>
-      {(enabled || work) && <div className="sp-channel-navigation"><div className="sp-channel-tabs" role="tablist" aria-label="Innhald i kanalen" onKeyDown={navigateTabList}
+  const navigation = (enabled || work) && <div className="sp-channel-navigation"><div className="sp-channel-tabs" role="tablist" aria-label="Innhald i kanalen" onKeyDown={navigateTabList}
         onKeyDownCapture={event => { event.currentTarget.dataset.keyboardNav = "true"; }}
         onPointerDownCapture={event => { delete event.currentTarget.dataset.keyboardNav; }}
         onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) delete event.currentTarget.dataset.keyboardNav; }}>
@@ -190,7 +190,11 @@ export function ChannelEventSpace({ api, owner, channelId, enabled: channelEnabl
           aria-selected={tab === "work"} aria-controls={`${id}-work`} onClick={() => { setTab("work"); updateUrl(null); }}>Arbeid</button>}
       </div>{enabled && next && <button type="button" className="sp-events-next" onClick={() => open(next)} title={`${ongoing ? "Pågår" : "Neste"}: ${next.title}`}>
         <span>{ongoing ? "Pågår" : `Neste: ${new Intl.DateTimeFormat("nb-NO", { day: "numeric", month: "short", timeZone: next.timezone }).format(new Date(next.starts_at))}`}</span><span> · {next.title}</span>
-      </button>}</div>}
+      </button>}</div>;
+  return <EventReferencesContext.Provider value={{ events: referenceEvents, collect, search: referencesAllowed ? search : undefined, suggest: referencesAllowed ? suggest : undefined, href: event => eventHref(channelId, event.id), open }}>
+    <style>{css}</style>
+    <div className="sp-channel-events" ref={root}>
+      {kretsrom?.tabs ? createPortal(navigation, kretsrom.tabs) : navigation}
       <div className="sp-event-chat" id={`${id}-chat`} role={enabled || work ? "tabpanel" : undefined} aria-labelledby={enabled || work ? `${id}-chat-tab` : undefined} hidden={tab !== "chat"} inert={tab !== "chat"}>
         {disabledNotice && <Status>Arrangement er slått av i denne kanalen. Meldingar og utkast er bevarte. <Button variant="quiet" onClick={() => setDisabledNotice(false)}>Lukk</Button></Status>}
         <ChannelEventFilterContext.Provider value={{

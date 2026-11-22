@@ -64,8 +64,13 @@ test("Kretsrom persists across reload and reopens the hidden private workshop fr
   await button("Lukk innstillingane").click();
   await page.reload();
   await expect(app).toHaveAttribute("data-design", "kretsrom");
-  await expect(app.locator(".sp-draft-composer").first()).toHaveCSS("border-top-left-radius", "13px");
-  await expect(app.locator(".sp-masthead")).toHaveCSS("border-bottom-width", "1px");
+  await expect(app.locator(".kr-compose").first()).toHaveCSS("border-top-left-radius", "13px");
+  await expect(app.locator(".kr-mast")).toHaveCSS("border-bottom-width", "1px");
+  await expect(app.locator(".kr-shell")).toBeVisible();
+  await expect(app.locator(".sp-shell")).toHaveCount(0);
+  const tools = app.locator(".kr-compose").first();
+  await expect(tools.locator(":scope > :first-child")).toHaveAccessibleName("Skriveverktøy");
+  await expect(tools.locator(":scope > :last-child")).toHaveAttribute("type", "submit");
   const input = app.getByRole("textbox", { name: "Skriv melding" });
   await expect(input).toBeEnabled();
   await input.fill('/imagegen "Bryggja"');
@@ -74,7 +79,7 @@ test("Kretsrom persists across reload and reopens the hidden private workshop fr
   await expect(workshop.getByRole("button", { name: "Godta" })).toBeEnabled();
   await button("Skjul").click();
   await button("Bilete klart").click();
-  await expect(workshop).toBeVisible();
+  await expect(app.locator(".kr-workshop-host").getByRole("region", { name: "Private biletmeldingar" })).toBeVisible();
   await button("Skjul").click();
   await appearance();
   await app.getByLabel("Prøv Kretsrom").uncheck();

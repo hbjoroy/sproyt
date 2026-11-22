@@ -1,156 +1,57 @@
-/* Sprøyt's Kretsrom edition. Unreviewed surfaces inherit the editorial system. */
-#sproyt-react-preview[data-design="kretsrom"] {
-  & .sp-product-navigation {
-    padding: .75rem;
-    gap: .5rem;
-  }
-  & .sp-product-nav-group > div[id] {
-    margin-inline-start: .65rem;
-    padding-inline-start: .4rem;
-    border-inline-start: 1px solid var(--sp-line);
-  }
-  & .sp-channel-pane .sp-conversation-title .sp-kicker,
-  & .sp-mobile-context-name {
-    font: inherit;
-    font-size: 1rem;
-    font-weight: 650;
-    letter-spacing: normal;
-    text-transform: none;
-    color: var(--sp-text);
-  }
-  & .sp-channel-pane .sp-conversation-title .sp-heading,
-  & .sp-mobile-context-name + .sp-mobile-conversation-short-name {
-    font-size: .9375rem;
-    font-weight: 500;
-  }
-  & [data-message-id] .sp-message::before { content: none; }
-  & [data-message-id] .sp-message-meta { padding-inline-start: 0; }
-  & [data-message-id] + [data-message-id]:not([data-date-start]) .sp-message { margin-top: .375rem; }
-  & .sp-reading-boundary {
-    display: flex;
-    align-items: baseline;
-    flex-wrap: wrap;
-    gap: .25rem .65rem;
-    margin-block: .5rem;
-    color: var(--sp-muted);
-  }
-  & .sp-reading-boundary::after {
-    content: "";
-    flex: 1 1 1rem;
-    align-self: center;
-    border-top: 1px solid var(--sp-line);
-  }
-  & .sp-reading-boundary :is(.sp-date, .sp-unread-boundary) {
-    margin: 0;
-    border: 0;
-    text-transform: none;
-    letter-spacing: normal;
-  }
-  & .sp-reading-boundary .sp-date::after { content: none; }
-  & .sp-kretsrom-directory {
-    min-height: 44px;
-    min-width: 44px;
-    padding: 0 .25rem;
-    border: 0;
-    background: transparent;
-    color: var(--sp-text);
-    font: inherit;
-    font-size: .875rem;
-    cursor: pointer;
-  }
-  & .sp-kretsrom-workshop { align-self: flex-start; min-height: 44px; }
+/* Application controls imported into the Kretsrom components. */
+.sp-kretsrom-wordmark, .sp-kretsrom-circle-mark, .sp-kretsrom-action-label { display: none; }
+.kr-shell .sp-header-actions { width: 100%; display: flex; align-items: center; justify-content: flex-start; gap: 6px; }
+.kr-shell .sp-sproyt-brand-static { display: none; }
+.kr-shell .sp-sproyt-brand-action.sp-button { display: flex; padding: 0; width: 34px; min-height: 44px; background: transparent; border: 0; }
+.kr-shell .sp-sproyt-brand img { width: 32px; height: 32px; }
+.kr-shell .sp-kretsrom-wordmark { display: inline; font: 700 23px/1 Georgia, serif; letter-spacing: -1px; }
+.kr-shell .sp-header-primary { margin-inline-start: auto; }
+.kr-room-options { position: relative; min-width: 0; }
+.kr-room-options > summary { display: flex; align-items: baseline; gap: 8px; cursor: pointer; padding-block: 12px; list-style: none; }
+.kr-room-options > summary::-webkit-details-marker { display: none; }
+.kr-room-options > summary::after { content: "⌄"; font-size: 12px; color: var(--sp-muted); }
+.kr-room-menu { position: absolute; z-index: 8; inset-block-start: 100%; min-width: min(280px,85vw); padding: 8px; border: 1px solid var(--sp-line); border-radius: 12px; background: var(--sp-canvas); box-shadow: 0 8px 24px #14251d22; }
+.kr-reading-area { display: flex; flex: 1; min-height: 0; position: relative; }
+.kr-reading-column { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; container: sp-content / inline-size; }
+.kr-reading-column .sp-discussion[hidden] { display: none; }
+.kr-workshop-host:empty, .kr-workshop-host[hidden] { display: none; }
+.kr-workshop-host { width: clamp(260px,32%,380px); border-inline-start: 1px solid var(--sp-line); background: var(--sp-chrome); overflow: auto; }
+.kr-workshop-host .sp-imagegen { margin: 0; max-height: 100%; border: 0; background: var(--sp-canvas); }
+.kr-workshop-host .sp-imagegen-head { background: var(--sp-chrome); }
+.kr-directory .sp-product-navigation { padding: 12px 8px; gap: 6px; }
+.kr-directory .sp-product-nav-group { border-bottom: 1px solid var(--sp-line); padding: 3px 0; }
+.kr-directory .sp-product-nav-group > div[id] { margin: 0 0 6px 17px; border-inline-start: 1px solid var(--sp-line); padding-inline-start: 5px; }
+.kr-directory .sp-product-nav-heading .sp-product-nav-chevron { order: 1; margin-inline-start: auto; }
+.kr-directory .sp-kretsrom-circle-mark { flex: none; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 7px; background: var(--kr-leaf); color: var(--sp-canvas); font: 600 14px Georgia, serif; }
+.kr-directory .sp-conversation[aria-current=page] { background: var(--sp-canvas); box-shadow: inset 3px 0 var(--kr-leaf); }
+#sproyt-react-preview .kr-room .sp-timeline { padding: 10px 14px; }
+.kr-shell [data-avatar-tone="0"] { --kr-avatar: light-dark(#dce7ce,#374831); }
+.kr-shell [data-avatar-tone="1"] { --kr-avatar: light-dark(#d7e6ea,#32474a); }
+.kr-shell [data-avatar-tone="2"] { --kr-avatar: light-dark(#f0d6bb,#514131); }
+.kr-shell [data-avatar-tone="3"] { --kr-avatar: light-dark(#e9dce7,#4d3c49); }
+.kr-byline .sp-message-early-adopter { background: transparent; border: 0; padding: 0; cursor: pointer; }
+.kr-body .sp-message-content > :first-child { margin-block-start: 0; }
+.kr-body .sp-message-content > :last-child { margin-block-end: 0; }
+.kr-actions .sp-kretsrom-action-label { display: inline; font: 12px/1.4 "Segoe UI", sans-serif; }
+.kr-actions .sp-message-primary-actions > .sp-button { width: auto; gap: 4px; color: var(--sp-muted); }
+.kr-room .sp-reading-boundary { display: flex; align-items: center; gap: 8px; margin: 6px 0; font: 12px/1.4 "Segoe UI",sans-serif; color: var(--kr-leaf); }
+.kr-room .sp-reading-boundary::after { content: ""; flex: 1; border-top: 1px solid var(--sp-line); }
+.kr-room .sp-reading-boundary :is(.sp-date,.sp-unread-boundary) { font: inherit; margin: 0; padding: 0; border: 0; letter-spacing: normal; text-transform: none; }
+.kr-room .sp-date::after { content: none; }
+#sproyt-react-preview .kr-room .sp-draft-composer { display: block; margin: 0; padding: 6px 12px max(6px,env(safe-area-inset-bottom)); background: var(--sp-canvas); border: 0; border-top: 1px solid var(--sp-line); }
+.kr-room .sp-writing-tools { display: flex; flex-wrap: wrap; gap: 4px; }
+.kr-room .sp-writing-tools .sp-composer-symbol { width: auto; gap: 6px; }
+.kr-room .sp-writing-tools .sp-composer-symbol::after { content: attr(title); font-size: 13px; }
+.kr-room .sp-kretsrom-workshop { min-height: 44px; color: var(--kr-leaf); }
+@container sp-app (max-width:900px) {
+  .kr-room-menu { inset-inline-end: 0; }
+  .kr-workshop-host { position: absolute; z-index: 4; inset: auto 0 0; width: 100%; max-height: 72%; border: 1px solid var(--sp-line); border-radius: 16px 16px 0 0; box-shadow: 0 -6px 24px #14251d22; }
 }
 
-.sp-kretsrom-wordmark, .sp-kretsrom-circle-mark, .sp-kretsrom-avatar { display: none; }
+.kr-mast .sp-header-actions { min-height: 44px; }
 
-#sproyt-react-preview[data-design="kretsrom"] {
-  & .sp-theme {
-    --sp-canvas: light-dark(#faf8f2, #202521);
-    --sp-chrome: light-dark(#efeee4, #293029);
-    --sp-text: light-dark(#202e29, #eef2e8);
-    --sp-muted: light-dark(#58645a, #bcc7b9);
-    --sp-line: light-dark(#d8dbce, #485148);
-    --sp-leaf: light-dark(#214e44, #b8e6d2);
-    --sp-accent: light-dark(#dfe999, #47592b);
-    --sp-on-accent: var(--sp-text);
-    --sp-surface: var(--sp-canvas);
-    --sp-wash: var(--sp-chrome);
-    --sp-rule: var(--sp-line);
-    font: 1rem/1.42 "Segoe UI", system-ui, sans-serif;
-  }
-  & .sp-masthead { background: var(--sp-canvas); border-bottom: 1px solid var(--sp-line); padding: 0 14px; }
-  & .sp-masthead::after { content: none; }
-  & .sp-sproyt-brand, & .sp-kretsrom-wordmark { font: 700 23px/1 Georgia, serif; letter-spacing: -1px; gap: 8px; }
-  & .sp-sproyt-brand img { width: 32px; height: 32px; }
-  & .sp-sidebar { background: var(--sp-chrome); }
-  & .sp-product-nav-group { border-bottom: 1px solid var(--sp-line); padding: 3px 0; }
-  & .sp-product-nav-heading .sp-product-nav-chevron { order: 1; margin-inline-start: auto; }
-  & .sp-product-nav-heading .sp-product-nav-disclosure { gap: 8px; font-size: 15px; font-weight: 600; }
-  & .sp-kretsrom-circle-mark {
-    display: grid; place-items: center; flex: none; width: 24px; height: 24px;
-    border-radius: 7px; background: var(--sp-leaf); color: var(--sp-canvas); font: 600 14px Georgia, serif;
-  }
-  & .sp-conversation[aria-current=true] { background: var(--sp-canvas); box-shadow: inset 3px 0 var(--sp-leaf); }
-  & .sp-timeline { padding: 10px 14px; }
-  & [data-message-id] .sp-message {
-    display: block; margin: 0 0 6px; padding: 0 0 0 42px; min-height: 32px;
-    background: transparent; border: 0; box-shadow: none;
-  }
-  & [data-message-id] .sp-message-meta {
-    position: static; margin: 0; padding: 0; min-height: 20px;
-    color: var(--sp-text); align-items: baseline; gap: 0 8px;
-  }
-  & .sp-kretsrom-avatar {
-    position: absolute; inset: 0 auto auto 0; width: 32px; height: 32px;
-    display: grid; place-items: center; border-radius: 50%; background: var(--sp-chrome);
-    color: var(--sp-leaf); font: 600 16px Georgia, serif;
-  }
-  & .sp-message-meta strong { font-size: 14px; }
-  & .sp-time { font: 12px/1.4 "Segoe UI", sans-serif; }
-  & .sp-message-body { margin: 2px 0; font-size: 16px; line-height: 1.42; }
-  & .sp-message-actions { justify-content: flex-start; padding: 0; }
-  & .sp-message-reactions .sp-button { border-radius: 20px; }
-  & .sp-draft-composer {
-    border: 1px solid var(--sp-line); border-radius: 13px; background: var(--sp-canvas);
-    margin: 6px 12px max(6px, env(safe-area-inset-bottom)); padding: 4px;
-  }
-  & .sp-draft-composer .sp-textarea { background: transparent; border: 0; }
-  & .sp-draft-composer .sp-composer-footer button { border-radius: 9px; }
-  & .sp-imagegen {
-    border: 1px solid var(--sp-line); background: var(--sp-canvas); border-radius: 16px;
-    max-height: min(64dvh, 38rem); overflow: auto;
-  }
-  & .sp-imagegen-head { background: var(--sp-chrome); border-radius: 16px 16px 0 0; }
-  & .sp-reading-boundary { color: var(--sp-leaf); }
-  @container sp-app (max-width: 900px) {
-    & .sp-header-actions { display: grid; grid-template-columns: auto auto minmax(0,1fr); gap: 0; }
-    & .sp-header-primary { justify-self: end; grid-column: 3; grid-row: 1; }
-    & .sp-sproyt-brand-action.sp-button { grid-column: 1; grid-row: 1; border: 0; }
-    & .sp-kretsrom-wordmark { display: inline; grid-column: 2; grid-row: 1; }
-    & .sp-mobile-conversation-context {
-      grid-column: 1 / -1; grid-row: 2; border-top: 1px solid var(--sp-line);
-      padding-block: 2px; min-width: 0;
-    }
-    & .sp-mobile-conversation-title { justify-content: flex-end; }
-    & .sp-mobile-conversation-identity { display: flex; align-items: baseline; flex: 0 1 auto; gap: 8px; }
-    & .sp-mobile-context-name { color: var(--sp-leaf); }
-    & .sp-mobile-context-name + .sp-mobile-conversation-short-name { border-left: 1px solid var(--sp-line); padding-left: 8px; }
-  }
-}
-
-.sp-kretsrom-action-label { display: none; }
-
-#sproyt-react-preview[data-design="kretsrom"] {
-  & .sp-kretsrom-avatar { text-transform: uppercase; background: light-dark(#dce7ce, #374831); }
-  & .sp-kretsrom-avatar[data-tone="1"] { background: light-dark(#d7e6ea, #32474a); }
-  & .sp-kretsrom-avatar[data-tone="2"] { background: light-dark(#f0d6bb, #514131); }
-  & .sp-kretsrom-avatar[data-tone="3"] { background: light-dark(#e9dce7, #4d3c49); }
-  & .sp-kretsrom-action-label { display: inline; font: 12px/1.4 "Segoe UI", sans-serif; }
-  & .sp-message-primary-actions { gap: 4px; }
-  & .sp-message-primary-actions > .sp-button { width: auto; gap: 4px; color: var(--sp-muted); }
-  & .sp-date { font: 12px/1.4 "Segoe UI", sans-serif; color: var(--sp-muted); }
-  & .sp-timeline > .sp-status:not([data-tone]) { background: transparent; border: 0; color: var(--sp-muted); }
-  & .sp-writing-tools { display: flex; flex-wrap: wrap; gap: 4px; }
-  & .sp-writing-tools .sp-composer-symbol { width: auto; max-width: 100%; padding-inline: 8px; gap: 6px; }
-  & .sp-writing-tools .sp-composer-symbol::after { content: attr(title); font-size: 13px; }
-}
+#sproyt-react-preview .kr-compose > .sp-textarea { order: 0; }
+#sproyt-react-preview .kr-byline :is(.sp-time,.sp-message-early-adopter,.sp-message-status-edit) { min-height: 24px; min-width: 24px; }
+.kr-directory .kr-search > summary { cursor: pointer; font-size: 13px; color: var(--sp-muted); min-height: 44px; align-content: center; }
+.kr-directory .sp-product-nav-tabs { order: -1; }
+.kr-room-options .kr-room-menu { max-height: min(70dvh,32rem); overflow: auto; }

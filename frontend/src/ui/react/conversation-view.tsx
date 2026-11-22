@@ -1,6 +1,7 @@
-import { Fragment, useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
+import { KretsromContext, KretsromLayout } from "./kretsrom-layout";
+import { Fragment, useContext, useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import type { ReactNode, Ref } from "react";
-import { AppShell, Button, ConversationList, Message, Status, TextField, Theme } from "@sproyt/ui/react";
+import { AppShell, Button, ConversationList, KretsromMessage, Message, Status, TextField, Theme } from "@sproyt/ui/react";
 import type { Conversation, ThemeMode } from "@sproyt/ui/react";
 import type { ApplicationRuntime } from "../../application/runtime";
 import type { ConversationTimelineItem } from "../../application/conversation-snapshot";
@@ -93,6 +94,20 @@ export function messagesForTimeline(props: Pick<TimelineProps, "messages" | "cha
     .sort((a, b) => a.sequence - b.sequence);
 }
 
+function kretsromDayLabel(sentAt: string) {
+  const date = new Date(sentAt);
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  const relative = date.toDateString() === today.toDateString() ? "I dag"
+    : date.toDateString() === yesterday.toDateString() ? "I går" : "";
+  const label = date.toLocaleDateString("nn-NO", {
+    weekday: "long", day: "numeric", month: "short",
+    ...(date.getFullYear() !== today.getFullYear() && { year: "numeric" })
+  });
+  return relative ? `${relative} · ${label}` : label;
+}
+
 export function ConversationTimeline(props: TimelineProps) {
   const matches = props.matches;
   const messages = matches
@@ -103,6 +118,7 @@ export function ConversationTimeline(props: TimelineProps) {
     ...messages.map(message => ({ type: "message" as const, message }))
   ];
   const visibleIds = new Set(messages.map(message => message.id));
+  const kretsrom = useContext(KretsromContext);
   const visibleEntries = entries.filter(item => item.type === "system"
     || visibleIds.has(item.message.id));
   const loadOlder = props.hasOlder && !props.error && props.onLoadOlder && <Button busy={props.loading}
@@ -113,7 +129,7 @@ export function ConversationTimeline(props: TimelineProps) {
     {props.error && <Status tone="error">{props.error}{props.onRetry && <Button onClick={props.onRetry}>Prøv igjen</Button>}</Status>}
     {props.loading && <Status>{matches ? "Lastar emnetreff …" : "Lastar meldingar …"}</Status>}
     {!props.loading && !props.error && !props.hasOlder && visibleEntries.length === 0 && <Status>{matches ? "Ingen meldingar med dette emnet." : "Ingen meldingar enno."}</Status>}
-    {!matches && !props.loading && !props.error && !props.hasOlder && messages.length > 0 && props.onLoadOlder && <Status>Starten på samtalen</Status>}
+    {!kretsrom && !matches && !props.loading && !props.error && !props.hasOlder && messages.length > 0 && props.onLoadOlder && <Status>Starten på samtalen</Status>}
     {visibleEntries.map((item, index) => item.type === "system"
       ? <Status key={`notice-${index}`}>{item.text}</Status>
       : <Fragment key={item.message.id}><ConversationMessage message={item.message} {...props}
@@ -141,6 +157,8 @@ export function formatMessageDateTime(sentAt: string): string {
 
 /** The thread parent uses the same safe rendering and permission policy as replies. */
 export function ConversationMessage(props: MessagePresentation & { readonly message: ChatMessage; readonly threadParent?: boolean; readonly dateLabel?: string; readonly unreadBoundary?: boolean }) {
+  const kretsrom = useContext(KretsromContext);
+  const Row = kretsrom ? KretsromMessage : Message;
   const message = props.message;
   const wrapper = useRef<HTMLDivElement>(null);
   const fullTimestamp = formatMessageDateTime(message.sent_at);
@@ -260,7 +278,7 @@ export function ConversationMessage(props: MessagePresentation & { readonly mess
   }, [earlyAdopter, earlyAdopterTooltipId, message.sender_display_name, props.formatAuthor]);
   const author = props.formatAuthor?.(message) ?? message.sender_display_name;
   const boundary = (props.dateLabel || props.unreadBoundary) && <div className="sp-reading-boundary">
-    {props.dateLabel && <div className="sp-date sp-kicker">{props.dateLabel}</div>}
+    {props.dateLabel && <div className="sp-date sp-kicker">{kretsrom ? kretsromDayLabel(message.sent_at) : props.dateLabel}</div>}
     {props.unreadBoundary && <div className="sp-unread-boundary" role="separator" aria-label="Uleste meldingar">Uleste meldingar</div>}
   </div>;
   if (message.deleted_at && !props.threadParent) return <>
@@ -271,9 +289,8 @@ export function ConversationMessage(props: MessagePresentation & { readonly mess
     </div>
   </>;
   return <>{boundary}
-    <div ref={wrapper} data-message-id={message.id} data-message-sequence={message.sequence} data-date-start={props.dateLabel ? "true" : undefined}>
-    <Message author={author} authorContent={<>
-        <span className="sp-kretsrom-avatar" aria-hidden="true" data-tone={(message.sender_id.codePointAt(message.sender_id.length - 1) ?? 0) % 4}>{Array.from(message.sender_display_name.trim())[0]}</span>
+    <div ref={wrapper} data-avatar-tone={kretsrom ? (message.sender_id.charCodeAt(message.sender_id.length - 1) % 4) : undefined} data-message-id={message.id} data-message-sequence={message.sequence} data-date-start={props.dateLabel ? "true" : undefined}>
+    <Row author={author} avatar={Array.from(message.sender_display_name.trim())[0]} authorContent={<>
         <strong>{author}</strong>
         {earlyAdopter && <button type="button" className="sp-message-early-adopter"
           aria-label="Blant dei første 50 på Sprøyt" title="Blant dei første 50 på Sprøyt">✨</button>}
@@ -285,13 +302,14 @@ export function ConversationMessage(props: MessagePresentation & { readonly mess
         reactions={props.renderReactions?.(message)}>
         {message.deleted_at ? <p>Meldinga er sletta.</p> : props.renderContent(message)}
         {!props.threadParent && props.renderThreadSummary?.(message)}
-    </Message>
+    </Row>
     <span id={timestampTooltipId} className="sp-message-time-tooltip" role="tooltip">{fullTimestamp}</span>
     {earlyAdopter && <span id={earlyAdopterTooltipId} className="sp-early-adopter-tooltip" role="tooltip">Blant dei første 50 på Sprøyt</span>}
   </div></>;
 }
 
 export interface ConversationViewProps {
+  readonly kretsrom?: boolean;
   readonly runtime: Pick<ApplicationRuntime, "getSnapshot" | "subscribe">;
   readonly theme: ThemeMode;
   readonly view: "list" | "detail";
@@ -325,7 +343,7 @@ export function ConversationView(props: ConversationViewProps) {
   const content = <div ref={setDiscussion} className="sp-discussion" data-thread-open={props.thread ? "true" : "false"}
         hidden={!!props.pageKey} inert={!!props.pageKey} aria-hidden={props.pageKey ? true : undefined}>
         <section className="sp-channel-pane" aria-label={props.title}>
-          {!props.emptyContent && <header className="sp-context">
+          {!props.kretsrom && !props.emptyContent && <header className="sp-context">
             <Button className="sp-only-compact" onClick={props.onBack}>← Samtalar</Button>
             <div className="sp-conversation-title">{props.context && <p className="sp-kicker">{props.context}</p>}<h1 className="sp-heading">{props.title}</h1></div>
             <div className="sp-conversation-toolbar">{props.contextActions}</div>
@@ -336,14 +354,19 @@ export function ConversationView(props: ConversationViewProps) {
         </section>
         {props.thread}
       </div>;
+  const masthead = <>{props.header}<span className="sp-sr" role="status" aria-atomic="true">{snapshot.connection.status}</span></>;
+  const directory = <ConversationNavigation {...props.navigation} />;
+  const view = props.pageKey ? "detail" : props.view;
+  const room = <><WorkspacePageOutlet />{props.renderDiscussion?.(content) ?? content}</>;
   return <Theme mode={props.theme} accent="citron" style={{ height: "100%", minHeight: 0 }}>
     <WorkspacePageProvider pageKey={props.pageKey}>
-    <AppShell view={props.pageKey ? "detail" : props.view} navigationLabel="Samtalar" navigation={<ConversationNavigation {...props.navigation} />}
-      header={<>{props.header}<span className="sp-sr" role="status" aria-atomic="true">{snapshot.connection.status}</span></>}>
-      <WorkspacePageOutlet />
-      {props.renderDiscussion?.(content) ?? content}
-      <PanelResizers discussion={discussion} threadOpen={Boolean(props.thread) && !props.pageKey} />
-    </AppShell>
+    {props.kretsrom ? <KretsromLayout view={view} masthead={masthead} directory={directory}
+      roomId={props.timeline.channelId} title={props.title} context={props.context} actions={props.contextActions}
+      showRoom={!props.emptyContent && !props.pageKey} backLabel={props.navigation.directoryScope === "direct" ? "Samtalar" : "Kretsar"}
+      onBack={props.onBack}>{room}</KretsromLayout>
+      : <AppShell view={view} navigationLabel="Samtalar" navigation={directory} header={masthead}>
+        {room}<PanelResizers discussion={discussion} threadOpen={Boolean(props.thread) && !props.pageKey} />
+      </AppShell>}
     {props.overlays}
     </WorkspacePageProvider>
   </Theme>;

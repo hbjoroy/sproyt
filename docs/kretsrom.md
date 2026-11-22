@@ -1,6 +1,6 @@
 # Kretsrom
 
-Kretsrom er den nye utgåva av designspråket for Sprøyt. Fyrste utprøving brukar den eksisterande React-klienten og dei versjonerte komponentane i `@sproyt/ui`. Slå på **Prøv Kretsrom** under **Innstillingar → Utsjånad og bruk**. Valet gjeld denne nettlesaren og kan slåast av medan ein brukar appen.
+Kretsrom er den nye utgåva av designspråket for Sprøyt. Kretsrom brukar eige oppsett frå `@sproyt/ui` 0.2.0. Sprøyt deler samtaledata, handlingar og kladdar mellom begge visingane. Slå på **Prøv Kretsrom** under **Innstillingar → Utsjånad og bruk**. Valet gjeld denne nettlesaren og kan slåast av medan ein brukar appen.
 
 Målet er at ein ven skal kjenne att gjengen, sjå kven som sa kva og svare med éi hand. Varm papirflate og kolgrått mørkt tema, bølgja og nynorsken er vidareførte kjenneteikn. Kretsen grupperer kanalane. Tekst, fokusmarkeringar og trykkflater skal halde seg lesbare når det vert trongt.
 
@@ -8,9 +8,9 @@ Målet er at ein ven skal kjenne att gjengen, sjå kven som sa kva og svare med 
 
 | Status | Flater og åtferd |
 | --- | --- |
-| Innarbeidd | Tydeleg kretsnamn over kanalen, samanhengande kanalgruppe, samanleggbare kretsar og «Skjulte kanalar». Bølgjesnarveg og synleg retur til kretsane på mobil. Rolegare meldingsrad, dato og ulestmarkør på same rad når dei fell saman. |
-| Innarbeidd | Ein skjult bileteverkstad med ei aktiv eller ferdig bestilling kan opnast frå skrivefeltet i opphavssamtalen. Eksisterande privat gjennomgang og godkjenning styrer vedlegget. |
-| Prøvd i prototype | Grupperte meldingar frå same ven, førehandsvising av siste melding i kanallista, trådsitat ved kladden, mediefliser og skriveverktøy med symbol og namn. Verkstad som sidepanel eller mobilark. |
+| Innarbeidd | Tydeleg kretsnamn ved sida av kanalnamnet, samanhengande kanalgruppe, samanleggbare kretsar og «Skjulte kanalar». Bølgjesnarveg og synleg retur til kretsane på mobil. Rolegare meldingsrad, dato og ulestmarkør på same rad når dei fell saman. |
+| Innarbeidd | Ein skjult bileteverkstad med ei aktiv eller ferdig bestilling kan opnast frå skrivefeltet i opphavssamtalen. Verkstaden opnar som sidepanel på stor skjerm og ark nedst på mobil. Eksisterande privat gjennomgang og godkjenning styrer vedlegget. |
+| Prøvd i prototype | Grupperte meldingar frå same ven, førehandsvising av siste melding i kanallista, trådsitat ved kladden, og mediefliser. |
 | Ope | Korleis finne biletebestillingar frå andre kretsar. Korleis vise direktemeldingar, omtalar og ferdige bilete samstundes. Feste reaksjonar og balansere bruk gjennom fleire veker mot nyleg bruk. |
 | Importert | Alle andre flater og interaksjonar kjem frå den redaksjonelle utgåva. Det omfattar mellom anna Arbeid, arrangement, agentoppsett, medlemskap, innboks, innstillingar, reaksjonsveljar og handtering av opplastingar. |
 
