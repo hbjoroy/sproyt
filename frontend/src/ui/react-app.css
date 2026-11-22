@@ -26,6 +26,8 @@
   margin: .2rem .65rem .5rem;
 }
 
+.sp-reading-boundary { display: contents; }
+
 /* Application chrome must not compete with the conversation for viewport height. */
 .sp-workspace[data-resizable-panels] { position: relative; grid-template-columns: var(--sp-sidebar-width) minmax(0, 1fr); }
 .sp-workspace[data-resizable-panels] > .sp-sidebar { border-right: 0; }

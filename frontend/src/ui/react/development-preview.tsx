@@ -553,6 +553,16 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
   installSproytStyles();
   const container = document.createElement("section");
   container.id = "sproyt-react-preview";
+  const designKey = "sproyt.design.kretsrom.v1";
+  let kretsrom = false;
+  try { kretsrom = localStorage.getItem(designKey) === "on"; } catch { /* Optional device preference. */ }
+  container.dataset.design = kretsrom ? "kretsrom" : "editorial";
+  function changeDesign(enabled: boolean) {
+    kretsrom = enabled;
+    container.dataset.design = enabled ? "kretsrom" : "editorial";
+    try { localStorage.setItem(designKey, enabled ? "on" : "off"); } catch { /* Keep the in-memory choice. */ }
+    update();
+  }
   container.setAttribute("aria-label", "Sprøyt");
   Object.assign(container.style, { position: "fixed", top: "var(--app-offset-top, 0px)", right: "0", bottom: "auto", left: "0",
     zIndex: "1000", height: "var(--app-height, 100dvh)",
@@ -839,6 +849,7 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
         </>}
         compactConversation={view === "detail" && snapshot.activeChannel && !pageKey ? {
           context: compactContext, title: snapshot.title, onBack: backToConversations,
+          directoryLabel: kretsrom ? (snapshot.activeChannel.is_direct ? "Samtalar" : "Kretsar") : undefined,
           unreadThreadReplies: snapshot.threadSummaryStatus.ready ? snapshot.threadSummaries.reduce((sum, item) => sum + item.unread_count, 0) : 0
         } : undefined}>
       {explicitPreview && <Status>Førehandsvising for utvikling. Meldingar, vedlegg, trådar og reaksjonar er tilgjengelege her.</Status>}
@@ -854,6 +865,10 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
           && historyState.target.page.destination.kind === "channel" && historyState.target.page.destination.channelId === memberFocus.channelId}
         appearanceContent={<><p className="sp-help">Desse visingsvala gjeld denne nettlesaren.</p>
           <section className="sp-settings-group"><h2>Tema</h2><p>Gjeldande tema: {host.theme() === "system" ? "Følg systemet" : host.theme() === "dark" ? "Mørkt" : "Lyst"}.</p><Button onClick={host.cycleTheme}>Byt tema</Button></section>
+          <section className="sp-settings-group"><h2>Designspråk</h2>
+            <label><input type="checkbox" checked={kretsrom} onChange={event => changeDesign(event.currentTarget.checked)} /> Prøv Kretsrom</label>
+            <p className="sp-help">Ei tettare samtalevising med vennekretsen fremst.</p>
+          </section>
           <section className="sp-settings-group"><h2>Meldingsvising</h2><Button onClick={() => host.setRenderMode(host.renderMode() === "raw" ? "view" : "raw")}>{host.renderMode() === "raw" ? "Vis formatert" : "Vis råtekst"}</Button></section></>}
         helpContent={<><ConnectionHealth key={owner ?? "signed-out"} details state={host.connectionHealth()} onRetry={host.retryConnection}
           onLogin={host.reauthenticateNow} onReload={() => { void host.appUpdate.run(captureUpdatePosition); }} />{explicitPreview && <section><h2>Utviklarførehandsvising</h2>{fullInterface()}</section>}</>}
@@ -876,6 +891,7 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
           renderIntegration: channelId => <PreviewGrafana key={channelId} host={host.advanced} channelId={channelId} /> }} /></HeaderActions>
       {!(historyState.target?.kind === "management" && historyState.target.page.kind === "help") && <ConnectionHealth key={`health:${owner ?? "signed-out"}`} state={host.connectionHealth()}
         onRetry={host.retryConnection} onLogin={host.reauthenticateNow} onReload={() => { void host.appUpdate.run(captureUpdatePosition); }} />}</>,
+    hiddenChannelsLabel: kretsrom ? "Skjulte kanalar" : undefined,
     navigationActions: <NewDirectMessage snapshot={snapshot} host={host.community}
       onOpen={() => host.navigateView({ kind: "management", page: { kind: "community", destination: { kind: "people" } } })}
       onStarted={() => { view = "detail"; update(); }} />,
@@ -988,7 +1004,7 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
       }
     },
     renderComposer: target => <div className="sp-composer-dock" key={`${target.channelId}:${target.parentMessageId ?? ""}`}>
-      {Boolean(target.parentMessageId) === Boolean(snapshot.thread) && <PreviewImageGeneration owner={host.imageGeneration} channelId={snapshot.selection.channelId} />}
+      {Boolean(target.parentMessageId) === Boolean(snapshot.thread) && <PreviewImageGeneration owner={host.imageGeneration} channelId={snapshot.selection.channelId} showResume={kretsrom} threadId={target.parentMessageId} />}
       <PreviewComposer host={host} target={target} /></div>,
     overlays: null
     });

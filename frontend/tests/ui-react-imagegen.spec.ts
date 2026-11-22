@@ -48,6 +48,37 @@ async function fixture(page: Page) {
   return { sent, submissions, polls: () => polls, holdPoll: (promise: Promise<void>) => { holdPoll = promise; }, sockets: () => sockets, fail: () => { failReview = true; }, hold: (promise: Promise<void>) => { holdReview = promise; } };
 }
 
+test("Kretsrom persists across reload and reopens the hidden private workshop from the composer", async ({ page }) => {
+  await fixture(page);
+  await page.goto("/?participant=kretsrom-workshop");
+  const app = page.locator("#sproyt-react-preview");
+  const button = (name: string) => app.getByRole("button", { name, exact: true });
+  const appearance = async () => {
+    await button("Innstillingar").click();
+    await button("Utsjånad og bruk").click();
+  };
+  await expect(app).toHaveAttribute("data-design", "editorial");
+  await appearance();
+  await app.getByLabel("Prøv Kretsrom").check();
+  await button("Tilbake til innstillingar").click();
+  await button("Lukk innstillingane").click();
+  await page.reload();
+  await expect(app).toHaveAttribute("data-design", "kretsrom");
+  const input = app.getByRole("textbox", { name: "Skriv melding" });
+  await expect(input).toBeEnabled();
+  await input.fill('/imagegen "Bryggja"');
+  await input.press("Control+Enter");
+  const workshop = app.getByRole("region", { name: "Private biletmeldingar" });
+  await expect(workshop.getByRole("button", { name: "Godta" })).toBeEnabled();
+  await button("Skjul").click();
+  await button("Bilete klart").click();
+  await expect(workshop).toBeVisible();
+  await button("Skjul").click();
+  await appearance();
+  await app.getByLabel("Prøv Kretsrom").uncheck();
+  await expect(app).toHaveAttribute("data-design", "editorial");
+});
+
 test("private image review survives reload and attaches without publishing; details, safe sources, hide, retry and dismiss", async ({ page }) => {
   const state = await fixture(page);
   await page.goto("/?participant=react-image-review&ui=react");

@@ -1,4 +1,5 @@
 import sproytUiCss from "@sproyt/ui/styles.css";
+import kretsromCss from "./kretsrom.css";
 import bridgeCss from "./legacy-bridge.css";
 import reactAppCss from "./react-app.css";
 import conversationNavigationCss from "./conversation-navigation.css";
@@ -18,7 +19,7 @@ export function installSproytStyles(): void {
   if (document.getElementById(styleId)) return;
   const style = document.createElement("style");
   style.id = styleId;
-  style.textContent = `${sproytUiCss}\n${reactAppCss}\n${bridgeCss}\n${conversationNavigationCss}\n${settingsNavigationCss}\n${agentSettingsCss}\n${gettingStartedCss}\n${directMessagesCss}\n${workspacePageCss}`;
+  style.textContent = `${sproytUiCss}\n${reactAppCss}\n${bridgeCss}\n${conversationNavigationCss}\n${settingsNavigationCss}\n${agentSettingsCss}\n${gettingStartedCss}\n${directMessagesCss}\n${workspacePageCss}\n${kretsromCss}`;
   document.head.append(style);
 }
 

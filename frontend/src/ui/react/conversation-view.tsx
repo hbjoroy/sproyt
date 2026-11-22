@@ -27,6 +27,7 @@ export interface ConversationNavigationProps {
   readonly recentChannelIds?: readonly string[];
   readonly groups: readonly ConversationGroup[];
   readonly selectedId: string | null;
+  readonly hiddenChannelsLabel?: string;
   readonly directoryReady?: boolean;
   readonly directoryError?: string;
   readonly onFindChannels?: () => void;
@@ -258,16 +259,18 @@ export function ConversationMessage(props: MessagePresentation & { readonly mess
     };
   }, [earlyAdopter, earlyAdopterTooltipId, message.sender_display_name, props.formatAuthor]);
   const author = props.formatAuthor?.(message) ?? message.sender_display_name;
-  if (message.deleted_at && !props.threadParent) return <>
+  const boundary = (props.dateLabel || props.unreadBoundary) && <div className="sp-reading-boundary">
     {props.dateLabel && <div className="sp-date sp-kicker">{props.dateLabel}</div>}
     {props.unreadBoundary && <div className="sp-unread-boundary" role="separator" aria-label="Uleste meldingar">Uleste meldingar</div>}
+  </div>;
+  if (message.deleted_at && !props.threadParent) return <>
+    {boundary}
     <div className="sp-thread-deleted-root" data-message-id={message.id} data-message-sequence={message.sequence}>
       <span>Meldinga er sletta.</span>
       {props.renderThreadSummary?.(message) ?? props.renderActions?.(message, { threadParent: false })}
     </div>
   </>;
-  return <>{props.dateLabel && <div className="sp-date sp-kicker">{props.dateLabel}</div>}
-    {props.unreadBoundary && <div className="sp-unread-boundary" role="separator" aria-label="Uleste meldingar">Uleste meldingar</div>}
+  return <>{boundary}
     <div ref={wrapper} data-message-id={message.id} data-message-sequence={message.sequence} data-date-start={props.dateLabel ? "true" : undefined}>
     <Message author={author} authorContent={<>
         <strong>{author}</strong>

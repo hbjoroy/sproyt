@@ -9,7 +9,7 @@ const labels: Record<string, string> = {
 };
 
 /** A view of the existing private inbox owner. Subscribing never starts polling. */
-export function PreviewImageGeneration({ owner, channelId }: { owner: ImageGenerationOwner; channelId: string | null }) {
+export function PreviewImageGeneration({ owner, channelId, showResume, threadId }: { owner: ImageGenerationOwner; channelId: string | null; showResume?: boolean; threadId?: string | null }) {
   const state = useSyncExternalStore(owner.subscribe, owner.getSnapshot);
   const restoreFocus = useRef<(() => void) | null>(null);
   useLayoutEffect(() => {
@@ -18,7 +18,16 @@ export function PreviewImageGeneration({ owner, channelId }: { owner: ImageGener
       restoreFocus.current = null;
     }
   }, [state.visible]);
-  if (!state.visible) return null;
+  if (!state.visible) {
+    if (!showResume) return null;
+    const scoped = state.jobs.filter(job => job.channel_id === channelId && (owner.threadRoot(job.id) ?? null) === (threadId ?? null));
+    const ready = scoped.some(job => job.state === "ready" || job.state === "accepted");
+    const working = scoped.some(job => ["queued", "submitting", "running", "accepting"].includes(job.state));
+    if (!ready && !working) return null;
+    return <Button variant="quiet" className="sp-kretsrom-workshop" onClick={() => owner.open()}>
+      <span aria-hidden="true">✦ </span>{ready ? "Bilete klart" : "Lagar bilete …"}
+    </Button>;
+  }
   const returnToComposer = (trigger: HTMLButtonElement) => {
     const field = trigger.closest(".sp-composer-dock")?.querySelector<HTMLTextAreaElement>(".sp-draft-composer textarea");
     return () => {
