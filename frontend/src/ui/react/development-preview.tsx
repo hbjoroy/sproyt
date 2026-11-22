@@ -967,7 +967,7 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
           aria-label="Svar i tråd" title="Svar i tråd"
           data-thread-trigger={message.id} aria-expanded={snapshot.thread?.rootMessageId === message.id}
           onPointerDown={event => { if (event.pointerType === "mouse" && event.button === 0) event.preventDefault(); }}
-          onClick={event => openMessageThread(message.id, event.currentTarget)}><ThreadIcon /></Button> : null;
+          onClick={event => openMessageThread(message.id, event.currentTarget)}><ThreadIcon /><span className="sp-kretsrom-action-label">Svar</span></Button> : null;
         return <MessageActions message={message} host={host} openReaction={reactionPicker.open}
           threadAction={threadAction} threadHasReplies={replies > 0} openThread={isRoot ? () => openMessageThread(message.id) : undefined} />;
       },

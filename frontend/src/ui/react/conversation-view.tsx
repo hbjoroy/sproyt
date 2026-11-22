@@ -273,6 +273,7 @@ export function ConversationMessage(props: MessagePresentation & { readonly mess
   return <>{boundary}
     <div ref={wrapper} data-message-id={message.id} data-message-sequence={message.sequence} data-date-start={props.dateLabel ? "true" : undefined}>
     <Message author={author} authorContent={<>
+        <span className="sp-kretsrom-avatar" aria-hidden="true" data-tone={(message.sender_id.codePointAt(message.sender_id.length - 1) ?? 0) % 4}>{Array.from(message.sender_display_name.trim())[0]}</span>
         <strong>{author}</strong>
         {earlyAdopter && <button type="button" className="sp-message-early-adopter"
           aria-label="Blant dei første 50 på Sprøyt" title="Blant dei første 50 på Sprøyt">✨</button>}

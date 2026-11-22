@@ -187,6 +187,7 @@ function AccountNavigation(props: NavigationProps) {
         <h2><button type="button" title={group.name} className="sp-product-nav-disclosure" aria-expanded={open} aria-controls={panelId} aria-disabled={searching || undefined}
           onClick={() => { if (searching) return; setRevealedGroup(undefined); update(setCircleExpanded(preferences, group.id, !open)); }}>
           <span className="sp-product-nav-chevron" aria-hidden="true">{open ? "⌄" : "›"}</span>
+          <span className="sp-kretsrom-circle-mark" aria-hidden="true">{Array.from(group.name.trim())[0]}</span>
           <span className="sp-product-nav-name">{group.name}</span><UnreadBadge count={unreadCount([group])} />
         </button></h2>
         {isCircle && <button type="button" className="sp-product-nav-pin" aria-pressed={preference?.pinned ?? false}
