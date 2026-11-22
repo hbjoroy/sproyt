@@ -2,3 +2,5 @@ node_modules/
 dist/
 demo-dist/
 .package-smoke-*/
+
+demo-kretsrom/

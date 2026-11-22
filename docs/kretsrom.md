@@ -4,6 +4,12 @@ Kretsrom er den nye utgåva av designspråket for Sprøyt. Kretsrom brukar eige 
 
 Målet er at ein ven skal kjenne att gjengen, sjå kven som sa kva og svare med éi hand. Varm papirflate og kolgrått mørkt tema, bølgja og nynorsken er vidareførte kjenneteikn. Kretsen grupperer kanalane. Tekst, fokusmarkeringar og trykkflater skal halde seg lesbare når det vert trongt.
 
+## Prototypen som målestokk
+
+Dei åtte originale skissene ligg i [prototypearkivet](prototypes/kretsrom/). [Kretsrom](prototypes/kretsrom/kretsrom.html) viser samtalen med Hyttegutta. [Mobilprat](prototypes/kretsrom/mobilprat.html) viser navigasjonen på telefon. [Verkstad aktiv](prototypes/kretsrom/verkstad-aktiv.html) viser korleis ein kjem attende til eit bilete som framleis blir laga.
+
+Designsystem 0.2.1 har ei eiga stilfil for referansen. [Bygg og prøv prototypen](../packages/sproyt-ui/README.md#kretsrom-reference). Prøva brukar Sprøyt sin panelkontroll på stor skjerm. I den utrulla Kretsrom-visinga står koplinga til panelkontrollen framleis att. Ved integrasjon skal vi prøve både kanal- og trådpanelet, også med ei breidd som allereie er lagra. Dei andre funksjonsprøvene står i [designrettleiinga](../packages/sproyt-ui/docs/design.md#kretsrom).
+
 ## Kva høyrer til denne utgåva?
 
 | Status | Flater og åtferd |

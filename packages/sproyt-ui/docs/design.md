@@ -1,8 +1,14 @@
 # Sprøyt layout and visual design
 
-## Kretsrom (0.2.0)
+## Kretsrom
 
 Use the selected Pratebok and Kretsen først prototypes for this edition. Kretsrom owns its layout through KretsromShell and KretsromMessage. The editorial layout rules below apply to the earlier edition.
+
+The visual baseline is the Hyttegutta / #Prat scene in the archived kretsrom.html. Use verkstad-aktiv.html for attachment tools and workshop states. The package ships the scoped stylesheet as @sproyt/ui/kretsrom-reference.css. In the Sprøyt repository, build the comparison with npm --prefix packages/sproyt-ui run build:kretsrom. Open the two HTML files in packages/sproyt-ui/demo-kretsrom directly.
+
+- Lead the directory with Vennekretsar, a small initial tile, the circle name and a disclosure. Indent channels on a fine rule. Show the latest visible sender and excerpt beneath a channel when available. Give the selected row a paper surface, soft corners and a narrow green leading edge. Keep settings and notification preferences reachable through secondary actions.
+- Leave sender, time and message on one continuous surface. Use muted actions under the words, a fine unread rule and a modest composer. Compare the same scene at 740px and on a phone, including light and dark. Match text hierarchy, spacing and surfaces before adjusting breakpoints.
+- At integration, compare both editions using real host flows. Exercise sidebar and thread resizing by drag and keyboard, reload and reset. Switch circles and DMs, collapse a circle and reveal a hidden channel. Check the wave shortcut, drafts through navigation and send failure, saved reactions, replies, attachment-only sending, and closing and reopening a working or completed workshop. Verify access to search, notifications, settings and channel tasks. Prototype fixtures establish appearance and interaction intent. Record host parity separately before rollout.
 
 - A 44px masthead carries the wave and serif Sprøyt wordmark. The room header below it identifies the circle and channel together. On a phone, show the back-to-circles action on the left and the destination on the right. Keep the wave shortcut.
 - The warm directory groups channels beneath collapsible circle headings. Keep hidden channels in an expandable subgroup. On narrow screens directory and conversation occupy the same viewport in turn.
