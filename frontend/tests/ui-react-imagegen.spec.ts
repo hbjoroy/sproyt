@@ -64,6 +64,8 @@ test("Kretsrom persists across reload and reopens the hidden private workshop fr
   await button("Lukk innstillingane").click();
   await page.reload();
   await expect(app).toHaveAttribute("data-design", "kretsrom");
+  await expect(app.locator(".sp-draft-composer").first()).toHaveCSS("border-top-left-radius", "13px");
+  await expect(app.locator(".sp-masthead")).toHaveCSS("border-bottom-width", "1px");
   const input = app.getByRole("textbox", { name: "Skriv melding" });
   await expect(input).toBeEnabled();
   await input.fill('/imagegen "Bryggja"');

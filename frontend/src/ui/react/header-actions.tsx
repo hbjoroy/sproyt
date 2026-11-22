@@ -74,6 +74,7 @@ export function HeaderActions({ children, primary, compactActions, compactConver
       <img src="/assets/sproyt-wave-icon-512.png" alt="" aria-hidden="true" />
       <ConnectionLogoMark phase={connection.phase} />
     </Button>
+    <span className="sp-kretsrom-wordmark" aria-hidden="true">Sprøyt</span>
     {compactConversation && <div className="sp-mobile-conversation-context">
       {compactConversation.directoryLabel && <button type="button" className="sp-kretsrom-directory" onClick={compactConversation.onBack}>
         <span aria-hidden="true">‹ </span>{compactConversation.directoryLabel}

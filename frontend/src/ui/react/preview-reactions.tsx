@@ -81,7 +81,7 @@ export function PreviewReactionActions({ message, open, primaryAction, overflowA
   return <>
     <div className="sp-message-primary-actions">
       <Button className="sp-message-symbol" variant="quiet" aria-label="Legg til reaksjon" title="Legg til reaksjon"
-        onPointerDown={keepPointerTarget} onClick={event => open(message, event.currentTarget)}><span aria-hidden="true">♡</span></Button>
+        onPointerDown={keepPointerTarget} onClick={event => open(message, event.currentTarget)}><span aria-hidden="true">♡</span><span className="sp-kretsrom-action-label">Reager</span></Button>
       {primaryAction}
       {hasOverflow && <Button className="sp-message-symbol" variant="quiet" aria-label="Fleire meldingsval" title="Fleire meldingsval"
         onPointerDown={keepPointerTarget} onClick={() => setMenuOpen(true)}><span aria-hidden="true">⋯</span></Button>}
