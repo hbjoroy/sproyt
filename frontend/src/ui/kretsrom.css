@@ -110,3 +110,12 @@
 .kr-reaction-picker .sp-saved-emoji-head > strong, .kr-reaction-picker .sp-saved-emoji-grid,
 .kr-reaction-picker[data-expanded=false] .sp-custom-reaction, .kr-reaction-picker .sp-help:empty { display: none; }
 .kr-reaction-picker .sp-reaction-more { margin: 0; border: 0; width: auto; padding-inline: 8px; }
+
+#sproyt-react-preview .kr-footer :is(.sp-message-primary-actions, .sp-reaction-badge-wrap) > .sp-button {
+  min-height: 32px; height: auto; padding-block: 2px;
+}
+@media (pointer: coarse) {
+  #sproyt-react-preview .kr-footer :is(.sp-message-primary-actions, .sp-reaction-badge-wrap) > .sp-button {
+    min-height: 36px; min-width: 44px;
+  }
+}

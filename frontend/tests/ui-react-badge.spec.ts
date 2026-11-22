@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { destinationSurface } from "./support/destination-surface";
 import { expect, test, type Locator } from "@playwright/test";
 
@@ -87,3 +88,40 @@ for (const touch of [false, true]) {
     });
   });
 }
+
+test("Kretsrom keeps status beside the name and actions compact", async ({ page }) => {
+  const bundle = await readFile(new URL("../dist/app.js", import.meta.url));
+  await page.route(/\/assets\/app\/[^/]+\/app.js$/, route => route.fulfill({ contentType: "text/javascript", body: bundle }));
+  await page.addInitScript(() => localStorage.setItem("sproyt.design.kretsrom.v1", "on"));
+  await page.goto(`/?participant=kr-status-${Date.now()}&ui=react`);
+  const preview = page.locator("#sproyt-react-preview");
+  const composer = preview.getByRole("textbox", {name:"Skriv melding"});
+  await expect(composer).toBeEnabled();
+  await preview.getByRole("button", { name: "Innstillingar", exact: true }).click();
+  await preview.getByRole("button", { name: "Profil og status", exact: true }).click();
+  const dialog = destinationSurface(preview, "Profil og status", false);
+  await dialog.getByLabel("Statusemoji", { exact: true }).fill("☀️");
+  await dialog.getByLabel("Statusmelding", { exact: true }).fill("Ute i sola");
+  await dialog.getByRole("button", { name: "Lagre status", exact: true }).click();
+  await expect(dialog).toContainText("Statusen er lagra.");
+  await returnFromProfile(preview);
+  const body = `Status i Kretsrom ${Date.now()}`;
+  await composer.fill(body);
+  await composer.press("Control+Enter");
+  const message = preview.locator("[data-message-id]").filter({ hasText: body }).last();
+  const status = message.getByRole("button", {name: /^Vis status:/});
+  await expect(status).toHaveText("☀️");
+  const byline = message.locator(".kr-byline");
+  const name = (await byline.locator("strong").boundingBox())!;
+  const emoji = (await status.boundingBox())!;
+  expect(emoji.x).toBeGreaterThan(name.x);
+  expect(emoji.y).toBeLessThan(name.y + name.height);
+  const coarse = await page.evaluate(() => matchMedia("(pointer: coarse)").matches);
+  expect((await message.locator(".kr-footer").boundingBox())!.height).toBe(coarse ? 36 : 32);
+  await status.click();
+  const detail = message.locator(".kr-status-detail");
+  await expect(detail).toBeVisible();
+  await expect(detail).toContainText("Ute i sola");
+  await detail.getByRole("button", {name:"Endre status"}).click();
+  await expect(page.getByRole("dialog", {name:"Profil og status"})).toBeVisible();
+});

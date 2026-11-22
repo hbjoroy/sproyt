@@ -21,7 +21,7 @@
 #fredagsprat form{padding:11px 16px 14px;border-top:1px solid var(--line)}#fredagsprat .compose{background:var(--paper);border:1px solid var(--line);border-radius:13px;padding:4px 5px 4px 12px}#fredagsprat input{min-width:0;flex:1;background:transparent;color:var(--ink);font:inherit;border:0;height:40px}#fredagsprat .spr .send{background:var(--lime);height:40px;width:42px;display:grid;place-items:center}#fredagsprat .send:disabled{opacity:.58}#fredagsprat .quote{font-size:13px;border-left:3px solid var(--leaf);padding-left:8px;margin-bottom:8px}
 #fredagsprat .picker{position:absolute;bottom:72px;left:12px;right:12px;max-width:420px;background:var(--paper);border:1px solid var(--line);border-radius:16px;padding:12px;box-shadow:0 8px 28px #14251d24;z-index:2}#fredagsprat .pickhead{display:flex;align-items:center;justify-content:space-between;font-size:14px}#fredagsprat .picker button{min-height:44px;padding:4px 9px}#fredagsprat .emojirow{flex-wrap:wrap;gap:0}#fredagsprat .emojirow button{min-width:44px;font-size:21px}#fredagsprat .picker .pinfo{font-size:13px;color:var(--mut)}#fredagsprat .reader{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
 #fredagsprat .sofa .layout{display:block}#fredagsprat .sofa nav{display:none}#fredagsprat .sofa header{background:var(--side)}#fredagsprat .sofa .to-list{display:inline-block;float:right;margin-left:18px}#fredagsprat .sofa .feed{padding-inline:max(16px,9%)}#fredagsprat .sofa .msg p{background:var(--side);padding:7px 12px;border-radius:0 12px 12px 12px}#fredagsprat .sofa .own{flex-direction:row-reverse}#fredagsprat .sofa .own p{background:var(--lime)}#fredagsprat .spr.list nav{display:block;border:0;min-height:490px}#fredagsprat .spr.list main{display:none}#fredagsprat .spr.list .layout{display:block}
-@container(max-width:600px){#fredagsprat .layout{display:block}#fredagsprat nav{display:none}#fredagsprat .spr .to-list{display:block;float:none;margin:0}#fredagsprat .feed{padding-inline:12px}#fredagsprat .actions button{min-height:44px}#fredagsprat header{padding:8px 14px}#fredagsprat .sofa .feed{padding-inline:12px}}
+@container(max-width:600px){#fredagsprat .layout{display:block}#fredagsprat nav{display:none}#fredagsprat .spr .to-list{display:block;float:none;margin:0}#fredagsprat .feed{padding-inline:12px}#fredagsprat .actions button{min-height:36px;min-width:44px}#fredagsprat header{padding:8px 14px}#fredagsprat .sofa .feed{padding-inline:12px}}
 #fredagsprat .tight{--gap:6px}
 #fredagsprat .tight .mast{height:44px;padding-inline:14px}
 #fredagsprat .tight .brand{font-size:23px}
@@ -47,6 +47,12 @@
 #fredagsprat .tight .nested{margin:0 0 6px 17px;border-left:1px solid var(--line);padding-left:5px}
 #fredagsprat .tight nav .fold{color:var(--mut);font-size:13px}
 #fredagsprat .tight .concealed button{font-weight:400;color:var(--mut);padding-left:22px}
+
+.kr-status-trigger { border: 0; padding: 0 3px; min-width: 28px; min-height: 24px; background: transparent; font: inherit; cursor: pointer; }
+.kr-status-detail { position: fixed; inset: 0; margin: auto; box-sizing: border-box; width: max-content; max-width: min(28rem, calc(100% - 32px)); padding: 14px; border: 1px solid var(--line); border-radius: 12px; color: var(--ink); background: var(--paper); box-shadow: 0 6px 24px #14251d33; }
+.msg .kr-status-detail p { margin: 0 0 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.kr-status-detail button { min-height: 36px; padding-inline: 12px; background: transparent; border: 0; color: inherit; font: inherit; cursor: pointer; }
+
 </style>
 <script>
 (()=>{
@@ -101,8 +107,10 @@ for(const el of root.querySelectorAll('.spr')){
   }
   const rows=data[room];
   function article(m,i){
+   const statusId='personstatus-'+Array.from(root.querySelectorAll('.spr')).indexOf(el)+'-'+i;
+   const personStatus=m.name==='Anders'?'<button class="kr-status-trigger" popovertarget="'+statusId+'" title="🏠 Bergensområdet" aria-label="Vis status: 🏠 Bergensområdet">🏠</button><div id="'+statusId+'" popover="auto" class="kr-status-detail"><p>🏠 Bergensområdet</p><button popovertarget="'+statusId+'" popovertargetaction="hide">Lukk</button></div>':'';
    const reactions=Object.entries(m.votes).filter(([,n])=>n).map(([v,n])=>'<button class="count" data-do="vote" data-i="'+i+'" data-v="'+esc(v)+'" aria-pressed="'+!!m.mine[v]+'">'+esc(v)+' '+n+'</button>').join('');
-   return '<article class="'+(m.name==='Du'?'own':'')+'"><span class="av" style="--tone:'+(colors[m.name]||'var(--side)')+'">'+esc(m.name[0])+'</span><div class="msg"><div class="meta"><strong>'+esc(m.name)+'</strong><time>'+esc(m.time)+'</time></div>'+m.lines.map(l=>'<p>'+esc(l)+'</p>').join('')+'<div class="actions">'+reactions+btn('react',i,'☺ Reager')+(thread===null?btn('thread',i,m.replies.length?m.replies.length+' svar':'Svar'):'')+'</div></div></article>';
+   return '<article class="'+(m.name==='Du'?'own':'')+'"><span class="av" style="--tone:'+(colors[m.name]||'var(--side)')+'">'+esc(m.name[0])+'</span><div class="msg"><div class="meta"><strong>'+esc(m.name)+'</strong>'+personStatus+'<time>'+esc(m.time)+'</time></div>'+m.lines.map(l=>'<p>'+esc(l)+'</p>').join('')+'<div class="actions">'+reactions+btn('react',i,'☺ Reager')+(thread===null?btn('thread',i,m.replies.length?m.replies.length+' svar':'Svar'):'')+'</div></div></article>';
   }
   feed.innerHTML=thread===null?rows.map((m,i)=>(unread[room]&&i===initial[room].length-1?'<div class="rule">Nytt sidan sist</div>':'')+article(m,i)).join(''):article(rows[thread],thread)+rows[thread].replies.map(x=>{const n=x.indexOf(': ');return '<article><span class="av" style="--tone:var(--side)">'+esc(x[0])+'</span><div class="msg"><strong>'+esc(x.slice(0,n))+'</strong><p>'+esc(x.slice(n+2))+'</p></div></article>'}).join('');
   q('.quote').hidden=thread===null;if(thread!==null)q('.quote').textContent='Svar til '+rows[thread].name+' · '+rows[thread].lines[0];

@@ -292,9 +292,10 @@ export function ConversationMessage(props: MessagePresentation & { readonly mess
     <div ref={wrapper} data-avatar-tone={kretsrom ? (message.sender_id.charCodeAt(message.sender_id.length - 1) % 4) : undefined} data-message-id={message.id} data-message-sequence={message.sequence} data-date-start={props.dateLabel ? "true" : undefined}>
     <Row author={author} avatar={Array.from(message.sender_display_name.trim())[0]} authorContent={<>
         <strong>{author}</strong>
+        {kretsrom && props.renderAuthorStatus?.(message)}
         {earlyAdopter && <button type="button" className="sp-message-early-adopter"
           aria-label="Blant dei første 50 på Sprøyt" title="Blant dei første 50 på Sprøyt">✨</button>}
-        {props.renderAuthorStatus?.(message)}
+        {!kretsrom && props.renderAuthorStatus?.(message)}
       </>} dateTime={message.sent_at}
         time={props.formatTime(message.sent_at)}
         status={message.deleted_at ? "Sletta" : visibleStatus ?? (message.edited_at ? "Redigert" : undefined)}

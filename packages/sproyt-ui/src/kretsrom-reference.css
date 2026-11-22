@@ -390,7 +390,7 @@
     padding-inline: 12px;
   }
   .kr-reference .actions button {
-    min-height: 44px;
+    min-height: 36px; min-width: 44px;
   }
   .kr-reference header {
     padding: 8px 14px;
@@ -941,3 +941,9 @@
 .kr-reference [data-lucide="map-pin"]::before {
   content: "⌖";
 }
+
+
+.kr-status-trigger { border: 0; padding: 0 3px; min-width: 28px; min-height: 24px; background: transparent; font: inherit; cursor: pointer; }
+.kr-status-detail { position: fixed; inset: 0; margin: auto; box-sizing: border-box; width: max-content; max-width: min(28rem, calc(100% - 32px)); padding: 14px; border: 1px solid var(--line); border-radius: 12px; color: var(--ink); background: var(--paper); box-shadow: 0 6px 24px #14251d33; }
+.msg .kr-status-detail p { margin: 0 0 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.kr-status-detail button { min-height: 36px; padding-inline: 12px; background: transparent; border: 0; color: inherit; font: inherit; cursor: pointer; }

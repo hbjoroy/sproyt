@@ -953,7 +953,7 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
       formatTime: sentAt => new Date(sentAt).toLocaleTimeString(["nn-NO", "nb-NO"], { hour: "2-digit", minute: "2-digit", hourCycle: "h23" }),
       formatAuthor: message => host.isOwnMessage(message) ? "Du" : message.sender_display_name,
       earlyAdopter: message => Boolean(host.settings.profileFor?.(message.sender_id)?.early_adopter),
-      renderAuthorStatus: message => <MessageProfileStatus host={host.settings} userId={message.sender_id} own={host.isOwnMessage(message)} />,
+      renderAuthorStatus: message => <MessageProfileStatus compact={kretsrom} host={host.settings} userId={message.sender_id} own={host.isOwnMessage(message)} />,
       messageStatus: host.messageStatus,
       renderReactions: message => <PreviewMessageReactions message={message} host={host} owner={kretsrom ? owner : null} />,
       onReactionRequest: reactionPicker.open,
