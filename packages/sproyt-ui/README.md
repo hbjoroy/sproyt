@@ -1,5 +1,7 @@
 # Sprøyt UI — 0.1.6
 
+Sprøyt sin nye klientutgåve er dokumentert i [Kretsrom](../../docs/kretsrom.md), med oversikt over vurderte og importerte flater.
+
 Reusable editorial web components for React 18/19 and Vue 3.5+, with matching light/dark themes and compact container layouts. The demo is a local simulation, not a messaging service.
 
 ## Use in another project

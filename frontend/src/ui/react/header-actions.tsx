@@ -6,6 +6,7 @@ export interface CompactConversationHeader {
   readonly context?: string;
   readonly title: string;
   readonly onBack: () => void;
+  readonly directoryLabel?: string;
   readonly unreadThreadReplies?: number;
 }
 
@@ -74,6 +75,9 @@ export function HeaderActions({ children, primary, compactActions, compactConver
       <ConnectionLogoMark phase={connection.phase} />
     </Button>
     {compactConversation && <div className="sp-mobile-conversation-context">
+      {compactConversation.directoryLabel && <button type="button" className="sp-kretsrom-directory" onClick={compactConversation.onBack}>
+        <span aria-hidden="true">‹ </span>{compactConversation.directoryLabel}
+      </button>}
       <button ref={conversationTrigger} type="button" className="sp-mobile-conversation-title"
         aria-expanded={conversationOpen} aria-controls={`${id}-conversation-name`}
         aria-label={`${compactConversation.context ? `${compactConversation.context}, ` : ""}${compactConversation.title}. Vis fullt namn og samtaleval.${compactConversation.unreadThreadReplies ? ` ${compactConversation.unreadThreadReplies} uleste svar i trådar.` : ""}`}

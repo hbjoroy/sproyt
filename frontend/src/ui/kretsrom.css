@@ -1,0 +1,62 @@
+/* Sprøyt's Kretsrom edition. Unreviewed surfaces inherit the editorial system. */
+#sproyt-react-preview[data-design="kretsrom"] {
+  & .sp-product-navigation {
+    padding: .75rem;
+    gap: .5rem;
+  }
+  & .sp-product-nav-group > div[id] {
+    margin-inline-start: .65rem;
+    padding-inline-start: .4rem;
+    border-inline-start: 1px solid var(--sp-line);
+  }
+  & .sp-channel-pane .sp-conversation-title .sp-kicker,
+  & .sp-mobile-context-name {
+    font: inherit;
+    font-size: 1rem;
+    font-weight: 650;
+    letter-spacing: normal;
+    text-transform: none;
+    color: var(--sp-text);
+  }
+  & .sp-channel-pane .sp-conversation-title .sp-heading,
+  & .sp-mobile-context-name + .sp-mobile-conversation-short-name {
+    font-size: .9375rem;
+    font-weight: 500;
+  }
+  & [data-message-id] .sp-message::before { content: none; }
+  & [data-message-id] .sp-message-meta { padding-inline-start: 0; }
+  & [data-message-id] + [data-message-id]:not([data-date-start]) .sp-message { margin-top: .375rem; }
+  & .sp-reading-boundary {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: .25rem .65rem;
+    margin-block: .5rem;
+    color: var(--sp-muted);
+  }
+  & .sp-reading-boundary::after {
+    content: "";
+    flex: 1 1 1rem;
+    align-self: center;
+    border-top: 1px solid var(--sp-line);
+  }
+  & .sp-reading-boundary :is(.sp-date, .sp-unread-boundary) {
+    margin: 0;
+    border: 0;
+    text-transform: none;
+    letter-spacing: normal;
+  }
+  & .sp-reading-boundary .sp-date::after { content: none; }
+  & .sp-kretsrom-directory {
+    min-height: 44px;
+    min-width: 44px;
+    padding: 0 .25rem;
+    border: 0;
+    background: transparent;
+    color: var(--sp-text);
+    font: inherit;
+    font-size: .875rem;
+    cursor: pointer;
+  }
+  & .sp-kretsrom-workshop { align-self: flex-start; min-height: 44px; }
+}

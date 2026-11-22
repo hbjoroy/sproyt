@@ -209,7 +209,7 @@ function AccountNavigation(props: NavigationProps) {
               return next;
             }); }}>
             <span className="sp-product-nav-chevron" aria-hidden="true">{hiddenOpen ? "⌄" : ">"}</span>
-            <span className="sp-product-nav-name">Andre kanalar ({hidden.conversations.length})</span><UnreadBadge count={unreadCount([hidden])} />
+            <span className="sp-product-nav-name">{props.hiddenChannelsLabel ?? "Andre kanalar"} ({hidden.conversations.length})</span><UnreadBadge count={unreadCount([hidden])} />
           </button>
           <div id={`${panelId}-hidden`} hidden={!hiddenOpen}>{rows(hidden)}</div>
         </div>}

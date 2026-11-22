@@ -29,6 +29,7 @@ export interface ConversationHostBindings {
   readonly onCloseThread: () => void;
   /** Scope/inbox/create/discover commands remain available outside channel rows. */
   readonly navigationActions: ReactNode;
+  readonly hiddenChannelsLabel?: string;
   readonly personalShortcut?: ReactNode;
   readonly navigationFooter?: ReactNode;
   /** Includes circle membership and each channel's notification controls. */
@@ -89,7 +90,7 @@ export function createConversationViewProps(snapshot: ConversationSnapshot, host
     title: snapshot.title, context, emptyContent: host.emptyContent,
     contextActions: host.contextActions, onBack: host.onBack, personalSpace: host.personalSpace, isPersonal: channel?.is_personal,
     navigation: {
-      favorites: host.favorites,
+      favorites: host.favorites, hiddenChannelsLabel: host.hiddenChannelsLabel,
       directoryReady: snapshot.directory.ready, directoryError: snapshot.directory.error,
       onFindChannels: host.onFindChannels, onInvitation: host.onInvitation, onGuide: host.onGuide,
       ownerId: host.ownerId,
