@@ -38,8 +38,8 @@ export function KretsromMessage(props: KretsromMessageProps) {
         <time className="sp-time" dateTime={props.dateTime}>{props.time}</time>{props.status && <small>{props.status}</small>}
       </header>
       <div className="kr-body">{props.children}</div>
-      <div className="kr-reactions">{props.reactions}</div>
-      <div className="kr-actions">{props.actions}</div>
+      <div className="kr-footer"><div className="kr-reactions">{props.reactions}</div>
+        <div className="kr-actions">{props.actions}</div></div>
     </div>
   </article>;
 }
