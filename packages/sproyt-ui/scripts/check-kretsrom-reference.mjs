@@ -26,6 +26,11 @@ try {
   }
   await page.setViewportSize({width:1280,height:800});
   await page.goto(sample);
+  const statusButton = page.getByRole('button', {name:'Vis status: 🏠 Bergensområdet'});
+  await statusButton.click();
+  assert.ok(await page.locator('.kr-status-detail:popover-open').isVisible());
+  await page.keyboard.press('Escape');
+  assert.ok(!await page.locator('.kr-status-detail').isVisible());
   const separator = page.getByRole('separator', {name:'Breidd på sidepanelet'});
   const width = () => page.locator('nav').evaluate(el => el.getBoundingClientRect().width);
   const initial = await width();

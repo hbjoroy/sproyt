@@ -1,6 +1,6 @@
 import { Button, Dialog, Status, TextField } from "@sproyt/ui/react";
 import { DestinationPage } from "./workspace-page";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { NotificationPreferences, NotificationSettings } from "../../api";
 import type { UserProfile } from "../../types";
 import type { SavedStatus } from "../../saved-statuses";
@@ -187,12 +187,28 @@ export function PreviewSettingsDialog({ kind, host, onClose, focusStatus = false
 }
 
 /** Other members' statuses are informational; only your own opens the editor. */
-export function MessageProfileStatus({ host, userId, own }: { host: PreviewSettingsHost; userId: string; own: boolean }) {
+export function MessageProfileStatus({ host, userId, own, compact = false }: { host: PreviewSettingsHost; userId: string; own: boolean; compact?: boolean }) {
   const profile = host.profileFor?.(userId);
   const status = [profile?.status_emoji.trim(), profile?.status_text.trim()].filter(Boolean).join(" ");
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
+  const statusId = useId();
   if (!status && !open) return null;
+  if (compact) return <>
+    {status && <button ref={trigger} type="button" className="kr-status-trigger" popoverTarget={statusId}
+      aria-label={`Vis status: ${status}`} title={status}>{profile?.status_emoji.trim() || "💬"}</button>}
+    <div id={statusId} popover="auto" className="kr-status-detail" aria-label="Personleg status">
+      <p>{status}</p>
+      {own && <Button variant="quiet" onClick={event => {
+        event.currentTarget.closest<HTMLElement>("[popover]")?.hidePopover();
+        setOpen(true);
+      }}>Endre status</Button>}
+      <button type="button" popoverTarget={statusId} popoverTargetAction="hide">Lukk</button>
+    </div>
+    {open && <PreviewSettingsDialog kind="profile" host={host} focusStatus onClose={() => {
+      setOpen(false); requestAnimationFrame(() => trigger.current?.focus({ preventScroll: true }));
+    }} />}
+  </>;
   if (!own) return <span className="sp-message-profile-status" title={status}>{status}</span>;
   return <>
     {status && <button ref={trigger} type="button" className="sp-message-profile-status sp-message-status-edit"

@@ -2,6 +2,8 @@
 
 ## Kretsrom
 
+Place the personal status emoji immediately after the sender name on desktop and mobile. Use a speech bubble for text-only status. Press or use the keyboard to read the full status, with editing available to its owner. Keep the timeline action row 32px high with a fine pointer and 36px high with 44px-wide buttons on touch screens. Keep 6px between messages.
+
 Use the selected Pratebok and Kretsen først prototypes for this edition. Kretsrom owns its layout through KretsromShell and KretsromMessage. The editorial layout rules below apply to the earlier edition.
 
 The visual baseline is the Hyttegutta / #Prat scene in the archived kretsrom.html. Use verkstad-aktiv.html for attachment tools and workshop states. The package ships the scoped stylesheet as @sproyt/ui/kretsrom-reference.css. In the Sprøyt repository, build the comparison with npm --prefix packages/sproyt-ui run build:kretsrom. Open the two HTML files in packages/sproyt-ui/demo-kretsrom directly.
