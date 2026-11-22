@@ -16,7 +16,7 @@ import type { PersonalSpaceLayout } from "./personal-space";
 export interface ConversationGroup {
   readonly id: string;
   readonly name: string;
-  readonly conversations: readonly (Omit<Conversation, "group"> & { readonly action?: ReactNode; readonly directActivity?: import("../../types").DirectActivity | null; readonly directGroup?: boolean; readonly hidden?: boolean })[];
+  readonly conversations: readonly (Omit<Conversation, "group"> & { readonly action?: ReactNode; readonly directActivity?: import("../../types").DirectActivity | null; readonly excerpt?: string | null; readonly directGroup?: boolean; readonly hidden?: boolean })[];
   readonly actions?: ReactNode;
 }
 
@@ -363,7 +363,7 @@ export function ConversationView(props: ConversationViewProps) {
     {props.kretsrom ? <KretsromLayout view={view} masthead={masthead} directory={directory}
       roomId={props.timeline.channelId} title={props.title} context={props.context} actions={props.contextActions}
       showRoom={!props.emptyContent && !props.pageKey} backLabel={props.navigation.directoryScope === "direct" ? "Samtalar" : "Kretsar"}
-      onBack={props.onBack}>{room}</KretsromLayout>
+      onBack={props.onBack}>{room}<PanelResizers discussion={discussion} threadOpen={Boolean(props.thread) && !props.pageKey} /></KretsromLayout>
       : <AppShell view={view} navigationLabel="Samtalar" navigation={directory} header={masthead}>
         {room}<PanelResizers discussion={discussion} threadOpen={Boolean(props.thread) && !props.pageKey} />
       </AppShell>}

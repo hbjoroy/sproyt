@@ -109,7 +109,7 @@ macro_rules! write_account_export {
             (select case when d.user_a_id=?uuid then d.user_b_id else d.user_a_id end from direct_conversations d where d.channel_id=c.id) as direct_user_id,
             (exists(select 1 from direct_conversations d where d.channel_id=c.id) or exists(select 1 from direct_group_conversations g where g.channel_id=c.id)) as is_direct,
             exists(select 1 from personal_spaces p where p.channel_id=c.id) as is_personal, c.hidden,coalesce(c.events_enabled,exists(select 1 from channel_events ce where ce.channel_id=c.id)) as events_enabled,
-            m.role,m.last_read_sequence,coalesce((select max(sequence) from messages where channel_id=c.id),0) as latest_sequence
+            cast(null as text) as latest_excerpt, m.role,m.last_read_sequence,coalesce((select max(sequence) from messages where channel_id=c.id),0) as latest_sequence
             from channels c join channel_memberships m on m.channel_id=c.id
             where m.user_id=?uuid and (cast(? as text) is null or c.slug>?) order by c.slug limit 1", $pg);
         let body = super::account_export::bounded_export_text("body", 64 * 1024, $pg);

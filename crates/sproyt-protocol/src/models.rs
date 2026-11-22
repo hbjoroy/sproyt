@@ -245,6 +245,9 @@ impl Eq for DirectActivity {}
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ChannelSummary {
+    /// Latest undeleted top-level message in this membership's channel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_excerpt: Option<String>,
     /// Effective channel event availability; absent on older servers.
     #[serde(default)]
     pub events_enabled: bool,

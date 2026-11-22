@@ -2033,7 +2033,11 @@ impl ChatRepository for PostgresChatRepository {
         actor: UserId,
     ) -> RepositoryFuture<'a, Vec<ChannelSummary>> {
         Box::pin(async move {
-            let rows = sqlx::query("select c.id,c.slug,c.name,c.kind,c.circle_id,c.description,c.hidden,coalesce(c.events_enabled,exists(select 1 from channel_events ce where ce.channel_id=c.id)) as events_enabled,(select case when d.user_a_id=$1 then d.user_b_id else d.user_a_id end from direct_conversations d where d.channel_id=c.id) as direct_user_id,(exists(select 1 from direct_conversations d where d.channel_id=c.id) or exists(select 1 from direct_group_conversations g where g.channel_id=c.id)) as is_direct,(exists(select 1 from personal_spaces p where p.channel_id=c.id)) as is_personal,m.role,m.last_read_sequence,coalesce((select max(sequence) from messages where channel_id=c.id),0) as latest_sequence from channels c join channel_memberships m on m.channel_id=c.id where m.user_id=$1 order by c.slug")
+            let rows = sqlx::query("select c.id,c.slug,c.name,c.kind,c.circle_id,c.description,c.hidden,coalesce(c.events_enabled,exists(select 1 from channel_events ce where ce.channel_id=c.id)) as events_enabled,(select case when d.user_a_id=$1 then d.user_b_id else d.user_a_id end from direct_conversations d where d.channel_id=c.id) as direct_user_id,(exists(select 1 from direct_conversations d where d.channel_id=c.id) or exists(select 1 from direct_group_conversations g where g.channel_id=c.id)) as is_direct,(exists(select 1 from personal_spaces p where p.channel_id=c.id)) as is_personal,
+                (select sender_display_name || ' · ' || substr(body,1,96) from messages
+                 where channel_id=c.id and parent_message_id is null and deleted_at is null
+                 order by sequence desc limit 1) as latest_excerpt,
+                m.role,m.last_read_sequence,coalesce((select max(sequence) from messages where channel_id=c.id),0) as latest_sequence from channels c join channel_memberships m on m.channel_id=c.id where m.user_id=$1 order by c.slug")
                 .bind(*actor.as_uuid())
                 .fetch_all(&self.pool)
                 .await
@@ -3937,6 +3941,7 @@ fn channel_summary(row: PgRow) -> Result<ChannelSummary, RepositoryError> {
     let last_read_sequence: i64 = row.try_get("last_read_sequence").map_err(storage)?;
     let latest_sequence: i64 = row.try_get("latest_sequence").map_err(storage)?;
     Ok(ChannelSummary {
+        latest_excerpt: row.try_get("latest_excerpt").map_err(storage)?,
         events_enabled: row.try_get("events_enabled").map_err(storage)?,
         hidden: row.try_get("hidden").map_err(storage)?,
         direct_activity: None,

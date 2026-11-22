@@ -756,6 +756,10 @@ where
         .unwrap();
     assert_eq!(summary.last_read_sequence, ChannelSequence::new(1));
     assert_eq!(summary.latest_sequence, ChannelSequence::new(3));
+    assert_eq!(
+        summary.latest_excerpt,
+        Some(format!("{} · third", third.sender_display_name))
+    );
 
     assert_eq!(
         repository

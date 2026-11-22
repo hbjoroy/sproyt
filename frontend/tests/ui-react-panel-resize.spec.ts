@@ -212,3 +212,24 @@ test("light and dark layout keep a one-pixel divider and readable content", asyn
     expect(await view.app.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
   }
 });
+
+test("Kretsrom keeps the remembered sidebar width, thread control and channel tools", async ({ page }) => {
+  const view = await openConversation(page);
+  await view.sidebar.press("End");
+  await view.app.getByRole("button", { name: "Innstillingar", exact: true }).click();
+  await view.app.getByRole("button", { name: "Utsjånad og bruk" }).click();
+  await view.app.getByLabel("Prøv Kretsrom").check();
+  await view.app.getByRole("button", { name: "Tilbake til innstillingar" }).click();
+  await view.app.getByRole("button", { name: "Lukk innstillingane" }).click();
+  await expect(view.sidebar).toHaveAttribute("aria-valuenow", "420");
+  await view.sidebar.press("ArrowLeft");
+  await expect(view.app.locator(".kr-directory")).toHaveCSS("width", "404px");
+  await page.reload();
+  await expect(view.sidebar).toHaveAttribute("aria-valuenow", "404");
+  await view.app.getByRole("button", { name: "Samtaleval, søk og direktemeldingar" }).click();
+  await expect(view.app.getByRole("tab", { name: "Direktemeldingar" })).toBeVisible();
+  await openThread(page, view);
+  await expect(view.threadDivider).toBeVisible();
+  await view.threadDivider.press("Home");
+  await expect(view.threadDivider).toHaveAttribute("aria-valuenow", "340");
+});

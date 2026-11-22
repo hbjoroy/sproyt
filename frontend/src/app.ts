@@ -3837,6 +3837,7 @@
           knownChannels = event.payload.channels.map(channel => {
             const previous = knownChannels.find(item => item.id === channel.id);
             return { ...channel,
+              latest_excerpt: previous && previous.latest_sequence > channel.latest_sequence ? previous.latest_excerpt : channel.latest_excerpt,
               direct_activity: previous && previous.latest_sequence > channel.latest_sequence && previous.direct_activity
                 ? { ...(channel.direct_activity ?? previous.direct_activity), last_message_at: previous.direct_activity.last_message_at }
                 : channel.direct_activity,
@@ -4126,7 +4127,7 @@
             visibleRead.confirm(`channel:${chatEvent.channel_id}`, chatEvent.sequence);
             renderChannels();
           } else if (chatEvent.type === "message_accepted") {
-            updateLatestSequence(chatEvent.message.channel_id, chatEvent.message.sequence);
+            updateLatestSequence(chatEvent.message);
             updateDirectActivity(chatEvent.message);
             if (chatEvent.message.channel_id === activeChannelId) {
               const revealOwnMessage = pendingMessageToReveal(chatEvent.message);
@@ -4136,12 +4137,14 @@
               renderChannels();
             }
           } else if (chatEvent.type === "message_edited") {
+            refreshEditedExcerpt(chatEvent.message);
             if (chatEvent.message.channel_id === activeChannelId) {
               replaceTimelineMessage(chatEvent.message);
               if (!chatEvent.message.parent_message_id) threadPreviewGeneration++;
               renderTimeline({ preserveScroll: true });
             }
           } else if (chatEvent.type === "message_deleted") {
+            refreshEditedExcerpt(chatEvent.message);
             updateDirectActivity(chatEvent.message);
             messageReactions.delete(chatEvent.message.id);
             if (chatEvent.message.channel_id === activeChannelId) {
@@ -4162,7 +4165,7 @@
         }
 
         if (event.type === "message_accepted") {
-          updateLatestSequence(event.payload.message.channel_id, event.payload.message.sequence);
+          updateLatestSequence(event.payload.message);
           updateDirectActivity(event.payload.message);
           if (event.payload.message.channel_id === activeChannelId) {
             const revealOwnMessage = pendingMessageToReveal(event.payload.message, event.request_id);
@@ -4177,6 +4180,7 @@
         }
 
         if (event.type === "message_edited") {
+            refreshEditedExcerpt(event.payload.message);
           if (event.payload.message.channel_id === activeChannelId) {
             replaceTimelineMessage(event.payload.message);
             if (!event.payload.message.parent_message_id) threadPreviewGeneration++;
@@ -4186,6 +4190,7 @@
         }
 
         if (event.type === "message_deleted") {
+            refreshEditedExcerpt(event.payload.message);
           updateDirectActivity(event.payload.message);
           messageReactions.delete(event.payload.message.id);
           if (event.payload.message.channel_id === activeChannelId) {
@@ -5183,9 +5188,23 @@
         }, 15_000);
       }
 
-      function updateLatestSequence(channelId: string, sequence: number): void {
+      function refreshEditedExcerpt(message: ChatMessage): void {
+        if (message.parent_message_id) return;
+        const channel = knownChannels.find(item => item.id === message.channel_id);
+        if (!channel) return;
+        channel.latest_excerpt = null;
+        renderChannels();
+        sendCommand("list_my_channels");
+      }
+
+      function updateLatestSequence(message: ChatMessage): void {
+        const { channel_id: channelId, sequence } = message;
         const channel = knownChannels.find((item) => item.id === channelId);
-        if (channel) channel.latest_sequence = Math.max(channel.latest_sequence || 0, sequence);
+        if (!channel) return;
+        if (!message.parent_message_id && !message.deleted_at && sequence >= channel.latest_sequence) {
+          channel.latest_excerpt = message.sender_display_name + " · " + Array.from(message.body).slice(0, 96).join("");
+        }
+        channel.latest_sequence = Math.max(channel.latest_sequence || 0, sequence);
       }
 
       function acknowledgeVisible(key: string, messageIds: readonly string[]): void {
