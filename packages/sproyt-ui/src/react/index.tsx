@@ -30,3 +30,5 @@ export function Dialog({open,onClose,title,children,closeLabel='Lukk'}:DialogPro
 export function Status({children,tone='info'}:{children:ReactNode;tone?:'info'|'error'}){return <div className="sp-status" data-tone={tone} role={tone==='error'?'alert':'status'}>{children}</div>}
 export interface ThreadPaneProps {title?:string;context?:string;parent:ReactNode;children:ReactNode;composer:ReactNode;onClose:()=>void;closeLabel?:string}
 export function ThreadPane({title='Tråd',context,parent,children,composer,onClose,closeLabel='Til samtalen'}:ThreadPaneProps){const id=useId();return <section className="sp-thread-pane" aria-labelledby={id} onKeyDown={e=>{if(e.key==='Escape'&&!e.defaultPrevented){e.stopPropagation();onClose();}}}><header className="sp-context"><div><div className="sp-kicker">{context}</div><h2 id={id} className="sp-heading">{title}</h2></div><Button onClick={onClose} aria-label={closeLabel}>← {closeLabel}</Button></header><div className="sp-thread-replies"><div className="sp-thread-parent">{parent}</div>{children}</div>{composer}</section>}
+
+export { KretsromShell, KretsromMessage, KretsromComposerRow } from "./kretsrom.js";

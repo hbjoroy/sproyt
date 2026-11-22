@@ -88,3 +88,40 @@
 .sp-message-reactions{grid-column:1/-1;grid-row:3;min-width:0}
 .sp-message-reactions:empty{display:none}
 @media(pointer:coarse){.sp-message-actions .sp-button{min-width:44px;min-height:44px}}
+
+/* Kretsrom uses the circle directory and reading layout from the prototype. */
+.kr-shell {
+  --sp-canvas: light-dark(#faf8f2,#202521); --sp-chrome: light-dark(#efeee4,#293029);
+  --sp-text: light-dark(#202e29,#eef2e8); --sp-muted: light-dark(#58645a,#bcc7b9);
+  --sp-line: light-dark(#d8dbce,#485148); --kr-leaf: light-dark(#214e44,#b8e6d2);
+  --sp-accent: light-dark(#dfe999,#47592b); --sp-on-accent: var(--sp-text);
+  --sp-surface: var(--sp-canvas); --sp-wash: var(--sp-chrome); --sp-rule: var(--sp-line);
+  display: grid; grid-template-rows: auto minmax(0,1fr); height: 100%; min-height: 0;
+  color: var(--sp-text); background: var(--sp-canvas); font: 16px/1.42 "Segoe UI", system-ui, sans-serif;
+}
+.kr-mast { min-height: 44px; padding: 0 14px; display: flex; align-items: center; border-bottom: 1px solid var(--sp-line); }
+.kr-layout { display: grid; grid-template-columns: clamp(220px,24%,328px) minmax(0,1fr); min-height: 0; }
+.kr-directory { background: var(--sp-chrome); border-inline-end: 1px solid var(--sp-line); overflow: auto; }
+.kr-room { min-width: 0; min-height: 0; display: flex; flex-direction: column; position: relative; }
+.kr-room-header { display: flex; gap: 10px; align-items: center; min-height: 52px; padding: 2px 14px; border-bottom: 1px solid var(--sp-line); }
+.kr-room-header strong { color: var(--kr-leaf); }
+.kr-room-title { padding-inline-start: 10px; border-inline-start: 1px solid var(--sp-line); overflow-wrap: anywhere; }
+.kr-back { display: none; }
+.kr-message { display: grid; grid-template-columns: 32px minmax(0,1fr); align-items: start; gap: 10px; margin-bottom: 6px; max-width: 860px; }
+.kr-avatar { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 50%; background: var(--kr-avatar, var(--sp-chrome)); color: var(--sp-text); text-transform: uppercase; font: 600 16px Georgia, serif; }
+.kr-copy { min-width: 0; }
+.kr-byline { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; font-size: 14px; }
+.kr-byline time, .kr-byline small { color: var(--sp-muted); font: 12px/1.4 "Segoe UI", sans-serif; }
+.kr-body { margin: 2px 0; overflow-wrap: anywhere; }
+.kr-actions, .kr-reactions { display: flex; flex-wrap: wrap; gap: 4px; }
+@container sp-app (max-width: 900px) {
+  .kr-layout { grid-template-columns: minmax(0,1fr); }
+  .kr-shell[data-view=list] .kr-room, .kr-shell[data-view=detail] .kr-directory { display: none; }
+  .kr-directory { border: 0; }
+  .kr-back { display: inline-flex; align-items: center; min-height: 44px; min-width: 44px; margin-inline-end: auto; padding: 0; border: 0; background: transparent; color: var(--kr-leaf); cursor: pointer; }
+}
+
+.kr-compose { display: flex; align-items: end; gap: 4px; border: 1px solid var(--sp-line); border-radius: 13px; padding: 4px; }
+.kr-compose .sp-button { width: 44px; height: 44px; flex: none; border-radius: 9px; }
+.kr-compose .sp-textarea { flex: 1; width: 0; background: transparent; border: 0; min-height: 44px; }
+.kr-mast { flex-direction: column; align-items: stretch; justify-content: center; }

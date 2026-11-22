@@ -1,7 +1,7 @@
 import {afterEach,describe,it,expect,vi} from 'vitest';
 import {render,fireEvent,cleanup as cleanupReact} from '@testing-library/react';
 import {render as renderVue,cleanup as cleanupVue} from '@testing-library/vue';
-import {Theme,Composer,TextField,EventCard,Button,Message} from '../src/react/index';
+import {KretsromShell,KretsromMessage,KretsromComposerRow,Theme,Composer,TextField,EventCard,Button,Message} from '../src/react/index';
 import {h} from 'vue';
 import * as Vue from '../src/vue/index';
 afterEach(()=>{cleanupReact();cleanupVue();});
@@ -70,4 +70,26 @@ describe('Vue controls',()=>{
  it('renders Theme content and emits a trimmed composer send',async()=>{const r=renderVue(Vue.Composer,{props:{label:'Message',modelValue:'  Hello  '}});await fireEvent.submit(r.container.querySelector('form')!);expect(r.emitted().send).toEqual([['Hello']]);expect((r.getByLabelText('Message') as HTMLTextAreaElement).value).toBe('  Hello  ');const theme=renderVue(Vue.Theme,{props:{mode:'dark'},slots:{default:'Theme content'}});expect(theme.getByText('Theme content')).toBeTruthy();});
  it('forwards field attributes and emits model updates',async()=>{const r=renderVue(Vue.TextField,{props:{label:'Name',modelValue:'',error:'Required'},attrs:{autocomplete:'name'}});const input=r.getByLabelText('Name');expect(input.getAttribute('autocomplete')).toBe('name');await fireEvent.input(input,{target:{value:'Anne'}});expect(r.emitted()['update:modelValue']).toEqual([['Anne']]);expect(document.getElementById(input.getAttribute('aria-describedby')!)?.textContent).toBe('Required');});
  it('blocks busy sends and emits RSVP changes',async()=>{const r=renderVue(Vue.Composer,{props:{label:'Message',modelValue:'Hello',busy:true}});await fireEvent.submit(r.container.querySelector('form')!);expect(r.emitted().send).toBeUndefined();const e=renderVue(Vue.EventCard,{props:{title:'Dinner',when:'18:00',modelValue:'yes'}});await fireEvent.click(e.getByRole('radio',{name:'Kanskje'}));expect(e.emitted()['update:modelValue']).toEqual([['maybe']]);});
+});
+
+describe('Kretsrom layout', () => {
+  it('owns the room, directory and reading order in React', () => {
+    const view = render(<KretsromShell view="detail" masthead="Sprøyt" directory="Kretsar" roomHeader="#Prat">
+      <KretsromMessage author="Lotte" avatar="L" time="18.32" actions="Reager">Skål!</KretsromMessage>
+      <KretsromComposerRow tools="Verktøy" send="Send">Kladd</KretsromComposerRow>
+    </KretsromShell>);
+    expect(view.getByRole('navigation').textContent).toBe('Kretsar');
+    expect(view.getByRole('article').textContent).toBe('LLotte18.32Skål!Reager');
+    expect(view.container.querySelector('.kr-compose')?.textContent).toBe('VerktøyKladdSend');
+  });
+  it('keeps the same room slots in Vue', () => {
+    const view = renderVue(Vue.KretsromShell, { props: { view: 'list' }, slots: {
+      masthead: () => 'Sprøyt', directory: () => 'Kretsar', roomHeader: () => '#Prat',
+      default: () => h(Vue.KretsromMessage, { author: 'Lotte', time: '18.32' }, {
+        avatar: () => 'L', default: () => 'Skål!', actions: () => 'Reager'
+      })
+    }});
+    expect(view.getByRole('navigation').textContent).toBe('Kretsar');
+    expect(view.getByRole('article').textContent).toBe('LLotte18.32Skål!Reager');
+  });
 });

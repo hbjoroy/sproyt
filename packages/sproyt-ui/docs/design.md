@@ -1,5 +1,17 @@
 # Sprøyt layout and visual design
 
+## Kretsrom (0.2.0)
+
+Use the selected Pratebok and Kretsen først prototypes for this edition. Kretsrom owns its layout through KretsromShell and KretsromMessage. The editorial layout rules below apply to the earlier edition.
+
+- A 44px masthead carries the wave and serif Sprøyt wordmark. The room header below it identifies the circle and channel together. On a phone, show the back-to-circles action on the left and the destination on the right. Keep the wave shortcut.
+- The warm directory groups channels beneath collapsible circle headings. Keep hidden channels in an expandable subgroup. On narrow screens directory and conversation occupy the same viewport in turn.
+- Use a 32px sender disc, 10px text gutter, a plain byline and a continuous paper reading surface. Keep date boundaries in the feed. Reactions and replies sit below the message.
+- The composer is a single rounded strip with a leading tool button and trailing send button. Keep in-progress media and thread context near the draft. Place the private workshop beside the conversation on wide screens and at the bottom on phones. Reopen an active job from its conversation.
+- Reuse the host's membership, draft, selection, upload, reaction and workshop owners. Additional destinations keep their existing behaviour when imported.
+
+
+
 Preserve the editorial character: warm paper or charcoal surfaces, strong destination names, restrained rules and familiar outline icons. Improve alignment and density before adding cards, navigation layers or decorative effects.
 
 ## Source and tokens

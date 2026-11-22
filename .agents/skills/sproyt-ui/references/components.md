@@ -81,3 +81,7 @@ Both framework entry points export `openReactionPicker(anchor, options)` and `re
 `Message` accepts `onReactionRequest(anchor)` in React and Vue. This requests the picker on context-menu activation or a 500ms touch hold, cancelled by movement over 10px, pointer cancellation, or release. Keep a visible reaction button for keyboard and assistive technology. Native links and fields retain their context menus.
 
 Example: `openReactionPicker(anchor, {selected: message.emoji, onSelect: emoji => toggleReaction(message.id, emoji)})`. The host owns toggling and persistence. The demo allows one local reaction per message, including thread replies. The dialog has no dimming backdrop, stays within viewport edges, supports Escape/outside dismissal, keyboard arrows in the emoji grid, native focus containment, and focus restoration.
+
+## Kretsrom
+
+KretsromShell receives view (list/detail), masthead, directory, optional roomHeader and content. KretsromMessage receives author, time, avatar, body, actions, reactions and optional delivery status. React uses props and children. Vue provides named slots with default slots for content. KretsromComposerRow places the tools control before the text field and send control. The host supplies all three controls. Both frameworks share the kr-* layout in styles.css.
