@@ -1,0 +1,60 @@
+import assert from 'node:assert/strict';
+import {createRequire} from 'node:module';
+import {readFile} from 'node:fs/promises';
+const root = new URL('../../../', import.meta.url);
+const { chromium } = createRequire(new URL('frontend/package.json', root))('playwright');
+const browser = await chromium.launch();
+try {
+  const page = await browser.newPage();
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  const sample = new URL('../demo-kretsrom/kretsrom.html', import.meta.url).href;
+  const studio = new URL('../demo-kretsrom/verkstad-aktiv.html', import.meta.url).href;
+  const original = await readFile(new URL('docs/prototypes/kretsrom/kretsrom.html', root), 'utf8');
+  for (const colorScheme of ['light','dark']) {
+    await page.emulateMedia({colorScheme});
+    await page.setViewportSize({width:756,height:640});
+    await page.setContent('<!doctype html><meta name="color-scheme" content="light dark">'+original);
+    const landmarks = () => page.evaluate(() => ['.mast','nav','.nested','[aria-current=true]','.feed','.av','.meta','.msg p','.rule','.compose'].map(s => {
+      const e = document.querySelector(s), r = e.getBoundingClientRect(), c = getComputedStyle(e);
+      return [s,r.x,r.y,r.width,r.height,c.fontFamily,c.fontSize,c.color,c.backgroundColor];
+    }));
+    const expected = await landmarks();
+    await page.goto(sample);
+    assert.deepEqual(await landmarks(), expected);
+    await page.goto('about:blank');
+  }
+  await page.setViewportSize({width:1280,height:800});
+  await page.goto(sample);
+  const separator = page.getByRole('separator', {name:'Breidd på sidepanelet'});
+  const width = () => page.locator('nav').evaluate(el => el.getBoundingClientRect().width);
+  const initial = await width();
+  await separator.press('ArrowRight');
+  assert.equal(await width(),initial+16);
+  const box = await separator.boundingBox();
+  const x = box.x+box.width/2, y = box.y+80;
+  await page.mouse.move(x,y); await page.mouse.down(); await page.mouse.move(x+54,y); await page.mouse.up();
+  assert.equal(await width(),initial+70);
+  await page.reload(); await separator.waitFor();
+  assert.equal(await width(),initial+70);
+  await separator.press('Enter');
+  assert.equal(await width(),initial);
+  await page.setViewportSize({width:390,height:760});
+  await page.goto(studio);
+  await page.locator('[data-do=generate]').click();
+  await page.locator('[data-do=hideStudio]').click();
+  await page.locator('.quick').click();
+  await page.locator('[data-do=useArt]').waitFor({state:'visible',timeout:20000});
+  await page.locator('[data-do=useArt]').click();
+  assert.ok(await page.locator('.tray .tile').isVisible());
+  await page.locator('[data-do=wave]').click();
+  assert.ok(await page.locator('nav').isVisible());
+  const hidden = page.locator('[data-do=concealed]').first();
+  await hidden.click();
+  assert.ok(await page.getByText('#Tippekonkurransen',{exact:true}).isVisible());
+  await page.locator('[data-do=open]').first().click();
+  assert.ok(await page.locator('.tray .tile').isVisible());
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+  assert.deepEqual(errors,[]);
+  console.log('Verified light and dark reference geometry, pointer and keyboard resize, reload, reset, mobile navigation and active workshop.');
+} finally { await browser.close(); }

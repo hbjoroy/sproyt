@@ -684,6 +684,7 @@ impl AccountExportRepository for InMemoryChatRepository {
                     let messages = state.messages.get(&channel.id).cloned().unwrap_or_default();
                     Some(ExportedChannel {
                         channel: ChannelSummary {
+                            latest_excerpt: None,
                             events_enabled: state.events_enabled_channels.contains(&channel.id),
                             hidden: state.hidden_channels.contains(&channel.id),
                             is_personal: state
@@ -2279,6 +2280,21 @@ impl ChatRepository for InMemoryChatRepository {
                 .filter_map(|membership| {
                     let channel = state.channels.get(&membership.channel_id)?;
                     Some(ChannelSummary {
+                        latest_excerpt: state
+                            .messages
+                            .get(&channel.id)
+                            .and_then(|rows| {
+                                rows.iter().rev().find(|m| {
+                                    m.parent_message_id.is_none() && m.deleted_at.is_none()
+                                })
+                            })
+                            .map(|m| {
+                                format!(
+                                    "{} · {}",
+                                    m.sender_display_name,
+                                    m.body.as_str().chars().take(96).collect::<String>()
+                                )
+                            }),
                         events_enabled: state.events_enabled_channels.contains(&channel.id),
                         hidden: state.hidden_channels.contains(&channel.id),
                         is_personal: state

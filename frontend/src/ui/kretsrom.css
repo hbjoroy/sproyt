@@ -55,3 +55,32 @@
 .kr-directory .kr-search > summary { cursor: pointer; font-size: 13px; color: var(--sp-muted); min-height: 44px; align-content: center; }
 .kr-directory .sp-product-nav-tabs { order: -1; }
 .kr-room-options .kr-room-menu { max-height: min(70dvh,32rem); overflow: auto; }
+
+/* Directory hierarchy and excerpts follow the archived Hyttegutta scene. */
+.kr-directory .kr-directory-heading {
+  display: flex; align-items: center; justify-content: space-between;
+  padding-inline-start: 8px; color: var(--sp-muted); font-size: 14px;
+}
+.kr-directory-heading button { min-width: 44px; min-height: 44px; border: 0; background: transparent; color: inherit; cursor: pointer; }
+.kr-directory .sp-product-nav-tabs { order: 0; }
+.kr-directory [data-directory-options=false] :is(.kr-search,.sp-product-nav-tabs,.sp-product-nav-pin,.sp-product-nav-group-actions,.sp-conversation-actions,.sp-product-nav-guide,.sp-product-nav-footer) { display: none; }
+.kr-directory .sp-product-navigation { gap: 0; padding: 6px 8px 12px; }
+.kr-directory .sp-product-nav-heading .sp-product-nav-disclosure { padding: 4px 6px; gap: 5px; font: 600 15px "Segoe UI",sans-serif; }
+.kr-directory .sp-conversations { gap: 0; }
+.kr-directory .sp-conversation-row { display: flex; align-items: center; border: 0; }
+.kr-directory .sp-conversation-row .sp-conversation {
+  flex: 1; min-width: 0; min-height: 44px; padding: 5px 8px 5px 16px;
+  border: 0; border-radius: 9px; font-size: 15px; font-weight: 600;
+}
+.kr-directory .sp-conversation-name { display: block; min-width: 0; text-align: start; }
+.kr-excerpt { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font: 12px/1.42 "Segoe UI",sans-serif; color: var(--sp-muted); }
+.kr-shell .kr-layout[data-resizable-panels] { position: relative; grid-template-columns: var(--sp-sidebar-width) minmax(0, 1fr); }
+@container sp-app (600px < width <= 900px) {
+  .kr-shell .kr-layout { grid-template-columns: minmax(180px,24%) minmax(0,1fr); }
+  .kr-shell[data-view] .kr-room { display: flex; }
+  .kr-shell[data-view] .kr-directory { display: block; border-inline-end: 1px solid var(--sp-line); }
+  .kr-shell .kr-back { display: none; }
+}
+
+.kr-directory .sp-product-nav-heading .sp-product-nav-chevron { width: 9px; }
+.kr-directory .sp-badge { min-width: 16px; padding-inline: 2px; }

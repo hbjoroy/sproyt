@@ -1,0 +1,30 @@
+name: Kretsrom prototype
+on:
+  pull_request:
+    paths:
+      - 'docs/prototypes/kretsrom/**'
+      - 'packages/sproyt-ui/**'
+      - '.agents/skills/sproyt-ui/**'
+      - 'frontend/src/ui/react/panel-resizers.tsx'
+      - '.github/workflows/kretsrom-reference.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  prototype:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+      - run: npm --prefix frontend ci
+      - run: npm --prefix packages/sproyt-ui ci
+      - run: npm --prefix packages/sproyt-ui run build:kretsrom
+      - run: npx --prefix frontend playwright install --with-deps chromium
+      - run: node packages/sproyt-ui/scripts/check-kretsrom-reference.mjs
+      - uses: actions/upload-artifact@v7
+        with:
+          name: kretsrom-prototype
+          path: packages/sproyt-ui/demo-kretsrom/*.html

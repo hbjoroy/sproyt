@@ -166,7 +166,8 @@ function AccountNavigation(props: NavigationProps) {
         <button type="button" className="sp-conversation" aria-current={item.id === props.selectedId ? "page" : undefined}
           onClick={() => select(group, item.id)}>
           {item.directGroup && <svg width="16" height="16" viewBox="0 0 24 24" role="img" aria-label="Gruppesamtale" className="sp-direct-group-icon"><circle cx="9" cy="8" r="3" /><path d="M3 21v-3a6 6 0 0112 0v3M16 5a3 3 0 010 6M18 15a5 5 0 013 4v2" /></svg>}
-          <span className="sp-conversation-name">{item.name}</span><UnreadBadge count={item.unread ?? 0} />
+          <span className="sp-conversation-name">{kretsrom ? item.name.replace(/^# /, "#") : item.name}
+            {kretsrom && item.excerpt && <small className="kr-excerpt">{item.excerpt}</small>}</span><UnreadBadge count={item.unread ?? 0} />
         </button>
         {item.action && <div className="sp-conversation-actions">{item.action}</div>}
       </div>)}
@@ -229,9 +230,17 @@ function AccountNavigation(props: NavigationProps) {
   }
 
   const kretsrom = useContext(KretsromContext);
+  const [optionsOpen, setOptionsOpen] = useState(false);
   const searchField = <TextField label="Finn samtale" type="search" value={props.query}
       onChange={event => props.onQueryChange(event.currentTarget.value)} />;
-  const directory = <div className="sp-product-navigation">
+  const directory = <div className="sp-product-navigation" data-directory-options={optionsOpen}>
+    {kretsrom && <div className="kr-directory-heading">
+      <span>{scope === "circles" ? "Vennekretsar" : "Direktemeldingar"}</span>
+      <button type="button" aria-label="Samtaleval, søk og direktemeldingar" aria-expanded={optionsOpen}
+        onClick={() => setOptionsOpen(value => !value)}>•••
+        {!optionsOpen && scope === "circles" && <UnreadBadge count={unreadCount(directGroups)} />}
+      </button>
+    </div>}
     {kretsrom ? <details className="kr-search"><summary>Finn samtale</summary>{searchField}</details> : searchField}
     <div className="sp-product-nav-tabs" role="tablist" aria-label="Samtalar">
       {(["circles", "direct"] as const).map(value => <button key={value} type="button" role="tab"
@@ -254,7 +263,7 @@ function AccountNavigation(props: NavigationProps) {
       </details>}
       {props.directoryReady === false ? <Status>{props.directoryError || "Hentar samtalane dine …"}</Status> : <>
       {props.directoryError && <Status tone="error">{props.directoryError}</Status>}
-      {sharedGroups.map(groupSection)}
+      {!kretsrom && sharedGroups.map(groupSection)}
       {(foldOthers ? preferred : circles).map(groupSection)}
       {foldOthers && <div className="sp-product-nav-others">
         <button type="button" className="sp-product-nav-disclosure" aria-expanded={othersOpen} aria-controls={`${id}-others`} aria-disabled={searching || undefined}
@@ -264,6 +273,7 @@ function AccountNavigation(props: NavigationProps) {
         </button>
         <div id={`${id}-others`} hidden={!othersOpen}>{others.map(groupSection)}</div>
       </div>}
+      {kretsrom && sharedGroups.map(groupSection)}
       {sharedGroups.length + circles.length === 0 && hiddenCount === 0 && <DirectoryEmptyState scope="circles" searching={searching} onFindChannels={props.onFindChannels} onInvitation={props.onInvitation} />}
       {sharedGroups.length + circles.length > 0 && hiddenCount === 0 && !searching && [...sharedGroups, ...circles].every(group => !group.conversations.length)
         && <p className="sp-product-nav-empty">Ingen kanalar enno. Opne menyen ved ein krets for å finne eller opprette ein kanal.</p>}

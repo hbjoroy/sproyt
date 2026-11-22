@@ -60,7 +60,7 @@ export function PanelResizers({ discussion, threadOpen }: {
   };
 
   useLayoutEffect(() => {
-    const workspace = discussion?.closest<HTMLElement>(".sp-workspace");
+    const workspace = discussion?.closest<HTMLElement>(".sp-workspace, .kr-layout");
     if (!discussion || !workspace) return;
     widths.current = readWidths();
     measure.current = () => {
@@ -71,7 +71,8 @@ export function PanelResizers({ discussion, threadOpen }: {
       const sidebarMax = Math.max(240, Math.min(420, width - contentMinimum));
       const sidebar = { min: 240, max: sidebarMax,
         value: Math.round(clamp(widths.current.sidebar ?? clamp(width * .21, 240, 260), 240, sidebarMax)) };
-      const contentWidth = wide ? width - sidebar.value : width;
+      const contentWidth = workspace.classList.contains("kr-layout")
+        ? discussion.clientWidth : wide ? width - sidebar.value : width;
       const threadMax = Math.max(340, Math.min(720, contentWidth - 440));
       const thread = { min: 340, max: threadMax,
         value: Math.round(clamp(widths.current.thread ?? contentWidth * .4, 340, threadMax)) };
@@ -89,6 +90,7 @@ export function PanelResizers({ discussion, threadOpen }: {
       measure.current?.();
     });
     observer.observe(workspace);
+    observer.observe(discussion);
     measure.current();
     const blur = () => finishDrag();
     const escape = (event: KeyboardEvent) => {
