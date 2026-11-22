@@ -1,5 +1,7 @@
+import { createPortal } from "react-dom";
+import { KretsromContext } from "./kretsrom-layout";
 import { Button, Status } from "@sproyt/ui/react";
-import { useLayoutEffect, useRef, useSyncExternalStore } from "react";
+import { useContext, useLayoutEffect, useRef, useSyncExternalStore } from "react";
 import type { ImageGenerationOwner } from "../../imagegen";
 
 const labels: Record<string, string> = {
@@ -10,6 +12,8 @@ const labels: Record<string, string> = {
 
 /** A view of the existing private inbox owner. Subscribing never starts polling. */
 export function PreviewImageGeneration({ owner, channelId, showResume, threadId }: { owner: ImageGenerationOwner; channelId: string | null; showResume?: boolean; threadId?: string | null }) {
+  const layout = useContext(KretsromContext);
+  const dock = useRef<HTMLSpanElement>(null);
   const state = useSyncExternalStore(owner.subscribe, owner.getSnapshot);
   const restoreFocus = useRef<(() => void) | null>(null);
   useLayoutEffect(() => {
@@ -29,14 +33,14 @@ export function PreviewImageGeneration({ owner, channelId, showResume, threadId 
     </Button>;
   }
   const returnToComposer = (trigger: HTMLButtonElement) => {
-    const field = trigger.closest(".sp-composer-dock")?.querySelector<HTMLTextAreaElement>(".sp-draft-composer textarea");
+    const field = (dock.current ?? trigger).closest(".sp-composer-dock")?.querySelector<HTMLTextAreaElement>(".sp-draft-composer textarea");
     return () => {
       if (field?.isConnected && !field.disabled && (document.activeElement === trigger || document.activeElement === document.body)) {
         field.focus({ preventScroll: true });
       }
     };
   };
-  return <section className="sp-imagegen" aria-label="Private biletmeldingar"
+  const workshop = <section className="sp-imagegen" aria-label="Private biletmeldingar"
     onPointerDown={event => {
       // Blurring an empty composer collapses its tools and moves this panel.
       // Keep a mouse action under the pointer until its click is delivered.
@@ -85,4 +89,5 @@ export function PreviewImageGeneration({ owner, channelId, showResume, threadId 
       </article>)}
     </div>
   </section>;
+  return layout?.workshop ? <><span hidden ref={dock} />{createPortal(workshop, layout.workshop)}</> : workshop;
 }

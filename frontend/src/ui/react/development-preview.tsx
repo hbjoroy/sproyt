@@ -802,7 +802,7 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
       processPilot={host.processPilot} workItems={host.workItems}
       onOpenChannel={id => host.navigateView({ kind: "conversation", channelId: id })} />;
     return createConversationViewProps(snapshot, {
-    runtime: host.runtime, theme: host.theme(), view, pageKey,
+    kretsrom, runtime: host.runtime, theme: host.theme(), view, pageKey,
     navigationFooter: <ViewHistoryControls inMenu history={host.viewHistory} snapshot={snapshot}
       onCapture={() => host.viewHistory.capture(captureUpdatePosition())} onOpen={host.openRecentView} />,
     onFindChannels: openCommunity, onInvitation: openInvitation,
@@ -847,7 +847,7 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
           {!personal && (snapshot.activeChannel?.is_direct ? directMembers(true) : <ChannelActions compact inlineOpen={open} onInlineClose={close}
             snapshot={snapshot} host={host} onDetails={openDetails} />)}
         </>}
-        compactConversation={view === "detail" && snapshot.activeChannel && !pageKey ? {
+        compactConversation={!kretsrom && view === "detail" && snapshot.activeChannel && !pageKey ? {
           context: compactContext, title: snapshot.title, onBack: backToConversations,
           directoryLabel: kretsrom ? (snapshot.activeChannel.is_direct ? "Samtalar" : "Kretsar") : undefined,
           unreadThreadReplies: snapshot.threadSummaryStatus.ready ? snapshot.threadSummaries.reduce((sum, item) => sum + item.unread_count, 0) : 0

@@ -1,4 +1,5 @@
-import { useEffect, useLayoutEffect, useId, useRef, useState, useSyncExternalStore } from "react";
+import { KretsromContext } from "./kretsrom-layout";
+import { useContext, useEffect, useLayoutEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import type { KeyboardEvent } from "react";
 import { Button, Status, TextField } from "@sproyt/ui/react";
 import type { ConversationGroup, ConversationNavigationProps } from "./conversation-view";
@@ -227,9 +228,11 @@ function AccountNavigation(props: NavigationProps) {
     event.currentTarget.parentElement?.querySelector<HTMLButtonElement>(`[data-scope="${next}"]`)?.focus();
   }
 
+  const kretsrom = useContext(KretsromContext);
+  const searchField = <TextField label="Finn samtale" type="search" value={props.query}
+      onChange={event => props.onQueryChange(event.currentTarget.value)} />;
   const directory = <div className="sp-product-navigation">
-    <TextField label="Finn samtale" type="search" value={props.query}
-      onChange={event => props.onQueryChange(event.currentTarget.value)} />
+    {kretsrom ? <details className="kr-search"><summary>Finn samtale</summary>{searchField}</details> : searchField}
     <div className="sp-product-nav-tabs" role="tablist" aria-label="Samtalar">
       {(["circles", "direct"] as const).map(value => <button key={value} type="button" role="tab"
         id={`${id}-${value}-tab`} data-scope={value} aria-selected={scope === value} aria-controls={`${id}-${value}-panel`}

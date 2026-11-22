@@ -18,6 +18,7 @@ export interface ConversationHostBindings {
   readonly directoryScope?: "circles" | "direct";
   readonly onDirectoryScopeChange?: (scope: "circles" | "direct") => void;
   readonly recentChannelIds?: readonly string[];
+  readonly kretsrom?: boolean;
   readonly runtime: ConversationViewProps["runtime"];
   readonly theme: ConversationViewProps["theme"];
   readonly view: ConversationViewProps["view"];
@@ -86,7 +87,7 @@ export function createConversationViewProps(snapshot: ConversationSnapshot, host
   const thread = snapshot.thread;
   const threadVisible = thread !== null && channelId !== null && thread.channelId === channelId;
   return {
-    runtime: host.runtime, theme: host.theme, view: host.view, pageKey: host.pageKey, header: host.header,
+    kretsrom: host.kretsrom, runtime: host.runtime, theme: host.theme, view: host.view, pageKey: host.pageKey, header: host.header,
     title: snapshot.title, context, emptyContent: host.emptyContent,
     contextActions: host.contextActions, onBack: host.onBack, personalSpace: host.personalSpace, isPersonal: channel?.is_personal,
     navigation: {
