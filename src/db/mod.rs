@@ -758,7 +758,7 @@ where
     assert_eq!(summary.latest_sequence, ChannelSequence::new(3));
     assert_eq!(
         summary.latest_excerpt,
-        Some(format!("{} · third", third.sender_display_name))
+        Some("Renamed chat contract actor · third".to_owned())
     );
 
     assert_eq!(

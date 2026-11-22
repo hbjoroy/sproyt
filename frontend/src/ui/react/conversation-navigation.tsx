@@ -237,7 +237,9 @@ function AccountNavigation(props: NavigationProps) {
     {kretsrom && <div className="kr-directory-heading">
       <span>{scope === "circles" ? "Vennekretsar" : "Direktemeldingar"}</span>
       <button type="button" aria-label="Samtaleval, søk og direktemeldingar" aria-expanded={optionsOpen}
-        onClick={() => setOptionsOpen(value => !value)}>•••</button>
+        onClick={() => setOptionsOpen(value => !value)}>•••
+        {!optionsOpen && scope === "circles" && <UnreadBadge count={unreadCount(directGroups)} />}
+      </button>
     </div>}
     {kretsrom ? <details className="kr-search"><summary>Finn samtale</summary>{searchField}</details> : searchField}
     <div className="sp-product-nav-tabs" role="tablist" aria-label="Samtalar">

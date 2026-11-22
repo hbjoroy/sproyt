@@ -4180,7 +4180,7 @@
         }
 
         if (event.type === "message_edited") {
-            refreshEditedExcerpt(event.payload.message);
+          refreshEditedExcerpt(event.payload.message);
           if (event.payload.message.channel_id === activeChannelId) {
             replaceTimelineMessage(event.payload.message);
             if (!event.payload.message.parent_message_id) threadPreviewGeneration++;
@@ -4190,7 +4190,7 @@
         }
 
         if (event.type === "message_deleted") {
-            refreshEditedExcerpt(event.payload.message);
+          refreshEditedExcerpt(event.payload.message);
           updateDirectActivity(event.payload.message);
           messageReactions.delete(event.payload.message.id);
           if (event.payload.message.channel_id === activeChannelId) {
