@@ -1,3 +1,4 @@
+import { messageExcerpt } from "../src/message-excerpt";
 import "./dice-roll.test";
 import "./channel-events.test";
 import "./event-composer-context.test";
@@ -1265,3 +1266,17 @@ test("chunk upload retries committed requests with truncated bodies and never re
   } finally { globalThis.fetch = previousFetch; }
 });
 import "../src/direct-activity.test";
+
+test("plain-text excerpts describe media, preserve captions and never expose clipped token data", () => {
+  const image = "[[media:123|image/jpeg|IMG_3042.jpg]]";
+  assert.equal(messageExcerpt("Lotte · Fredag på bryggja!\n" + image), "Lotte · Fredag på bryggja! Bilete");
+  assert.equal(messageExcerpt(image + "\n[[media:456|video/mp4|film.mp4]]"), "Bilete Video");
+  assert.equal(messageExcerpt("[[media:id|audio/mpeg|lyd.mp3]]"), "Lyd");
+  assert.equal(messageExcerpt("[[media:id|application/pdf|Referat%20fr%C3%A5%20turen.pdf]]"), "Referat frå turen.pdf");
+  assert.equal(messageExcerpt("Anne · [[media:id|image/png|langt%2"), "Anne · Bilete");
+  assert.equal(messageExcerpt("Anne · [[media:id|application/pdf|langt%2"), "Anne · Vedlegg");
+  assert.equal(messageExcerpt("[[media:12ab"), "Vedlegg");
+  assert.equal(messageExcerpt("[[media:id|text/plain|%zz]]"), "Vedlegg");
+  assert.equal(messageExcerpt("[[invite:privat-token]]"), "Invitasjon");
+  assert.equal(messageExcerpt("Hei på deg!"), "Hei på deg!");
+});
