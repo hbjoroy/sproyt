@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { expect, test, type Page, type WebSocketRoute } from "@playwright/test";
 import { destinationSurface } from "./support/destination-surface";
 
@@ -7,13 +8,13 @@ const owner = "thread-directory-reader";
 const id = (n: number) => `00000000-0000-7000-8000-${String(n).padStart(12, "0")}`;
 type Command = { type: string; request_id?: string; payload?: { channel_id?: string; root_message_id?: string; sequence?: number } };
 
-async function fixture(page: Page) {
+async function fixture(page: Page, onlyUnread = false) {
   const commands: Command[] = [];
   const batches: string[][] = [];
   const errors: string[] = [];
   let changedWhileOffline = false;
-  const replies = Array.from({ length: 35 }, (_, i) => ({ root_message_id: id(i + 1), reply_count: 1,
-    unread_count: 1, latest_sequence: 1001 + i }));
+  const replies = Array.from({ length: onlyUnread ? 1 : 35 }, (_, i) => ({ root_message_id: id(i + 1), reply_count: 1,
+    unread_count: 1, latest_sequence: (onlyUnread ? 2001 : 1001) + i }));
   const root = (n: number) => ({ id: id(n), channel_id: channel, parent_message_id: null, sender_id: "peer",
     sender_display_name: "Ada", sequence: n, sent_at: "2026-01-01T12:00:00Z", edited_at: null, deleted_at: null,
     body: `Gammal trådrot ${n}` });
@@ -58,7 +59,7 @@ async function fixture(page: Page) {
         case "list_mentions": reply("mentions_listed", { mentions: [] }); break;
         case "list_tasks": reply("tasks_listed", { tasks: [] }); break;
         // The older roots are deliberately absent from the currently loaded history.
-        case "subscribe_channel": reply("subscription_started", { channel_id: channel, history: [root(100)] }); break;
+        case "subscribe_channel": reply("subscription_started", { channel_id: channel, history: [root(onlyUnread ? 1 : 100)] }); break;
         case "list_channel_reactions": reply("channel_reactions_listed", { channel_id: channel, reactions: [] }); break;
         case "list_thread_summaries": reply("thread_summaries_listed", { channel_id: channel, summaries: replies }); break;
         case "load_thread": {
@@ -127,4 +128,22 @@ test("reconnection refreshes thread previews edited or deleted while offline", a
   await expect(directory.getByText("Gammal trådrot 34", { exact: true })).toHaveCount(0);
   expect(commands.filter(command => command.type === "mark_thread_read")).toEqual([]);
   expect(errors).toEqual([]);
+});
+
+test("Kretsrom keeps a directory dot until the unread thread reply is viewed", async ({ page }) => {
+  const bundle = await readFile(new URL("../dist/app.js", import.meta.url));
+  await page.route(/\/assets\/app\/[^/]+\/app.js$/, route => route.fulfill({contentType:"text/javascript", body:bundle}));
+  await page.addInitScript(() => localStorage.setItem("sproyt.design.kretsrom.v1", "on"));
+  const { app, commands } = await fixture(page, true);
+  const dot = app.locator(".sp-conversation[aria-current=page] .kr-unread-dot");
+  await expect(dot).toHaveCount(1);
+  const indicator = app.getByRole("button", {name:"Opne tråd, 1 svar, 1 nytt"});
+  await expect(indicator).toBeVisible();
+  expect(commands.some(command => command.type === "mark_thread_read")).toBe(false);
+  await indicator.click();
+  const pane = app.locator(".sp-thread-pane");
+  await expect(pane.getByRole("separator", {name:"Nytt sidan sist"})).toBeVisible();
+  await expect(pane.getByText("Svar i gammal tråd 1", {exact:true})).toBeVisible();
+  await expect.poll(() => commands.some(command => command.type === "mark_thread_read")).toBe(true);
+  await expect(dot).toHaveCount(0);
 });

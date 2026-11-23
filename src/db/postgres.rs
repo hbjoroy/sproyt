@@ -2037,6 +2037,12 @@ impl ChatRepository for PostgresChatRepository {
                 (select sender_display_name || ' · ' || substr(body,1,96) from messages
                  where channel_id=c.id and parent_message_id is null and deleted_at is null
                  order by sequence desc limit 1) as latest_excerpt,
+                coalesce((select r.sequence from messages r where r.channel_id=c.id and r.parent_message_id is null
+                  and r.deleted_at is null and r.sender_id<>m.user_id order by r.sequence desc limit 1),0) as latest_incoming_root_sequence,
+                exists(select 1 from messages r left join thread_read_markers t
+                  on t.root_message_id=r.parent_message_id and t.user_id=m.user_id
+                  where r.channel_id=c.id and r.parent_message_id is not null and r.deleted_at is null
+                  and r.sender_id<>m.user_id and r.sequence>coalesce(t.last_read_sequence,0)) as has_unread_thread_replies,
                 m.role,m.last_read_sequence,coalesce((select max(sequence) from messages where channel_id=c.id),0) as latest_sequence from channels c join channel_memberships m on m.channel_id=c.id where m.user_id=$1 order by c.slug")
                 .bind(*actor.as_uuid())
                 .fetch_all(&self.pool)
@@ -3941,6 +3947,14 @@ fn channel_summary(row: PgRow) -> Result<ChannelSummary, RepositoryError> {
     let last_read_sequence: i64 = row.try_get("last_read_sequence").map_err(storage)?;
     let latest_sequence: i64 = row.try_get("latest_sequence").map_err(storage)?;
     Ok(ChannelSummary {
+        latest_incoming_root_sequence: Some(
+            ChannelSequence::try_from(
+                row.try_get::<i64, _>("latest_incoming_root_sequence")
+                    .map_err(storage)?,
+            )
+            .map_err(storage)?,
+        ),
+        has_unread_thread_replies: row.try_get("has_unread_thread_replies").map_err(storage)?,
         latest_excerpt: row.try_get("latest_excerpt").map_err(storage)?,
         events_enabled: row.try_get("events_enabled").map_err(storage)?,
         hidden: row.try_get("hidden").map_err(storage)?,

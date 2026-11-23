@@ -153,3 +153,11 @@
   position: static; inset: auto !important; width: calc(100% - 40px);
   margin: 4px 0 4px auto; max-height: 48dvh; overflow: auto; box-shadow: none;
 }
+
+.kr-shell .kr-unread-dot { display: inline-block; flex: 0 0 8px; width: 8px; height: 8px; border-radius: 50%; background: var(--kr-leaf); }
+.kr-shell .sp-thread-unread { border-radius: 12px; padding: 2px 8px; background: var(--kr-leaf); color: var(--sp-canvas); font-weight: 650; }
+.kr-shell .sp-reading-boundary .sp-unread-boundary { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; color: var(--kr-leaf); }
+.kr-shell .sp-unread-boundary::after { content: ""; flex: 1; height: 1px; background: currentColor; opacity: .5; }
+.kr-shell .sp-thread-unread::before { content: none; }
+.kr-shell .sp-reading-boundary:has(.sp-unread-boundary)::after { content: none; }
+#sproyt-react-preview .kr-shell .sp-reading-boundary .sp-unread-boundary { flex: 1; border: 0; margin: 0; color: var(--kr-leaf); }

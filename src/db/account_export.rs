@@ -109,6 +109,12 @@ macro_rules! write_account_export {
             (select case when d.user_a_id=?uuid then d.user_b_id else d.user_a_id end from direct_conversations d where d.channel_id=c.id) as direct_user_id,
             (exists(select 1 from direct_conversations d where d.channel_id=c.id) or exists(select 1 from direct_group_conversations g where g.channel_id=c.id)) as is_direct,
             exists(select 1 from personal_spaces p where p.channel_id=c.id) as is_personal, c.hidden,coalesce(c.events_enabled,exists(select 1 from channel_events ce where ce.channel_id=c.id)) as events_enabled,
+                coalesce((select r.sequence from messages r where r.channel_id=c.id and r.parent_message_id is null
+                  and r.deleted_at is null and r.sender_id<>m.user_id order by r.sequence desc limit 1),0) as latest_incoming_root_sequence,
+                exists(select 1 from messages r left join thread_read_markers t
+                  on t.root_message_id=r.parent_message_id and t.user_id=m.user_id
+                  where r.channel_id=c.id and r.parent_message_id is not null and r.deleted_at is null
+                  and r.sender_id<>m.user_id and r.sequence>coalesce(t.last_read_sequence,0)) as has_unread_thread_replies,
             cast(null as text) as latest_excerpt, m.role,m.last_read_sequence,coalesce((select max(sequence) from messages where channel_id=c.id),0) as latest_sequence
             from channels c join channel_memberships m on m.channel_id=c.id
             where m.user_id=?uuid and (cast(? as text) is null or c.slug>?) order by c.slug limit 1", $pg);
