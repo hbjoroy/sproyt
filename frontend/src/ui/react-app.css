@@ -659,3 +659,7 @@
 
 .sp-scope-menu-action.sp-button { display: grid; grid-template-columns: 1.25rem minmax(0, 1fr); column-gap: .65rem; }
 .sp-scope-menu-action.sp-button:not(:has(> .sp-scope-menu-symbol, > svg))::before { content: ""; width: 1.25rem; }
+
+.sp-mark-all-read { padding: 2px 6px; }
+.sp-mark-all-read .sp-button { min-height: 36px; text-decoration: underline; text-underline-offset: 3px; }
+@media (pointer: coarse) { .sp-mark-all-read .sp-button { min-height: 44px; } }

@@ -21,6 +21,8 @@ export interface ConversationGroup {
 }
 
 export interface ConversationNavigationProps {
+  readonly hasUnread?: boolean;
+  readonly markAllRead?: (owner: string) => Promise<void>;
   readonly favorites?: import("../../circle-favorites").CircleFavorites;
   readonly ownerId?: string;
   readonly directoryScope?: "circles" | "direct";

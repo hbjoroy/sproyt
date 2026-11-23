@@ -233,6 +233,16 @@ function AccountNavigation(props: NavigationProps) {
 
   const kretsrom = useContext(KretsromContext);
   const [optionsOpen, setOptionsOpen] = useState(false);
+  const [marking, setMarking] = useState(false);
+  const [markError, setMarkError] = useState(false);
+  async function markAllRead() {
+    if (marking || !props.ownerId || !props.markAllRead) return;
+    setMarking(true);
+    setMarkError(false);
+    try { await props.markAllRead(props.ownerId); }
+    catch { setMarkError(true); }
+    finally { setMarking(false); }
+  }
   const searchField = <TextField label="Finn samtale" type="search" value={props.query}
       onChange={event => props.onQueryChange(event.currentTarget.value)} />;
   const directory = <div className="sp-product-navigation" data-directory-options={optionsOpen}>
@@ -243,6 +253,14 @@ function AccountNavigation(props: NavigationProps) {
         {!optionsOpen && scope === "circles" && <UnreadBadge count={unreadCount(directGroups)} />}
       </button>
     </div>}
+    {props.ownerId && props.markAllRead && props.directoryReady && (props.hasUnread || marking) &&
+      <div className="sp-mark-all-read">
+        <Button variant="quiet" disabled={marking} onClick={() => void markAllRead()}
+          title="Marker meldingar i alle kanalar, direktemeldingar og trådar som lesne">
+          {marking ? "Markerer som lese …" : "Marker alt som lese"}
+        </Button>
+        {markError && <Status tone="error">Klarte ikkje å markere som lese. Prøv igjen.</Status>}
+      </div>}
     {kretsrom ? <details className="kr-search"><summary>Finn samtale</summary>{searchField}</details> : searchField}
     <div className="sp-product-nav-tabs" role="tablist" aria-label="Samtalar">
       {(["circles", "direct"] as const).map(value => <button key={value} type="button" role="tab"

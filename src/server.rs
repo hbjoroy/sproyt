@@ -339,6 +339,10 @@ pub(super) fn build_router(state: AppState, operations: OperationalState) -> Rou
                 .post(add_saved_emoji)
                 .delete(remove_saved_emoji),
         )
+        .route(
+            "/api/v1/me/mark-all-read",
+            post(crate::web::account::mark_all_read),
+        )
         .route("/api/v1/me/favorite-circles", get(favorite_circles))
         .route(
             "/api/v1/me/personal-space",

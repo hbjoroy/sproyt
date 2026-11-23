@@ -6561,6 +6561,25 @@
             appUpdate,
             viewHistory,
             favorites: favoriteCircles,
+            async markAllRead(owner) {
+              const generation = accountGeneration;
+              const admitted = () => generation === accountGeneration && currentParticipantId === owner;
+              const through = new Map(knownChannels.map(channel => [channel.id, channel.latest_sequence]));
+              await http.empty("/api/v1/me/mark-all-read", {
+                method: "POST", headers: { "Content-Type": "application/json", "x-sproyt-account": owner },
+                body: JSON.stringify(Object.fromEntries(through)), signal: AbortSignal.timeout(20_000)
+              }, admitted);
+              if (!admitted()) return;
+              for (const channel of knownChannels) {
+                const limit = through.get(channel.id);
+                if (limit === undefined) continue;
+                channel.last_read_sequence = Math.max(channel.last_read_sequence, limit);
+                if (channel.latest_sequence <= limit) channel.has_unread_thread_replies = false;
+              }
+              renderChannels();
+              sendCommand("list_my_channels");
+              requestThreadSummaries();
+            },
             managementTarget: () => managementTarget,
             navigateView,
             openRecentView: target => {

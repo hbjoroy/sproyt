@@ -78,6 +78,7 @@ interface DevelopmentPreviewHost extends PreviewReactionHost, PreviewComposerHos
   readonly accountEpoch: () => number;
   readonly deviceInstall: typeof deviceInstall;
   readonly checkDevicePush: (owner: string, admitted: () => boolean) => Promise<DevicePushStatus>;
+  readonly markAllRead: (owner: string) => Promise<void>;
   readonly favorites: import("../../circle-favorites").CircleFavorites;
   readonly viewHistory: ViewHistory;
   readonly managementTarget: () => ManagementTarget | null;
@@ -836,6 +837,7 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
       ready={snapshot.directory.ready} onOpen={() => host.openPersonalSpace(owner)} />,
     personalSpace: owner ? { owner, accountKey: `${owner}:${accountEpoch}`, api: host.personalSpace, work: personal && work, onWorkChange: setSecondaryPaneOpen,
       chatKey: `${owner}:${accountEpoch}:${historyState.entryId}:${personalLatestRequest}` } : undefined,
+    markAllRead: host.markAllRead,
     favorites: host.favorites,
     directoryScope: historyState.target?.kind === "directory" ? historyState.target.scope : undefined,
     onDirectoryScopeChange: scope => host.navigateView({ kind: "directory", scope }),

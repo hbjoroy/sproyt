@@ -439,6 +439,11 @@ pub trait ChatRepository: ProfileRepository {
         channel_id: ChannelId,
         root_ids: Vec<MessageId>,
     ) -> RepositoryFuture<'a, Vec<ThreadRootPreview>>;
+    fn mark_all_read<'a>(
+        &'a self,
+        actor: UserId,
+        through: std::collections::BTreeMap<uuid::Uuid, i64>,
+    ) -> RepositoryFuture<'a, ()>;
     fn mark_thread_read<'a>(
         &'a self,
         actor: UserId,
@@ -2827,6 +2832,48 @@ impl ChatRepository for InMemoryChatRepository {
                     )
                 })
                 .collect())
+        })
+    }
+
+    fn mark_all_read<'a>(
+        &'a self,
+        actor: UserId,
+        through: std::collections::BTreeMap<uuid::Uuid, i64>,
+    ) -> RepositoryFuture<'a, ()> {
+        Box::pin(async move {
+            let mut state = self.lock_state()?;
+            for (id, limit) in through {
+                let channel = ChannelId::from_uuid(id);
+                let membership = (channel.clone(), actor.clone());
+                if !state.memberships.contains_key(&membership) {
+                    continue;
+                }
+                let mut latest = ChannelSequence::new(0);
+                let mut threads = HashMap::new();
+                for message in state.messages.get(&channel).into_iter().flatten() {
+                    if u64::from(message.sequence) > limit.max(0) as u64 {
+                        continue;
+                    }
+                    latest = latest.max(message.sequence);
+                    if let Some(root) = message.parent_message_id {
+                        threads
+                            .entry(root)
+                            .and_modify(|s: &mut ChannelSequence| *s = (*s).max(message.sequence))
+                            .or_insert(message.sequence);
+                    }
+                }
+                if let Some(member) = state.memberships.get_mut(&membership) {
+                    member.last_read_sequence = latest.max(member.last_read_sequence);
+                }
+                for (root, sequence) in threads {
+                    let marker = state
+                        .thread_read_markers
+                        .entry((root, actor.clone()))
+                        .or_insert(sequence);
+                    *marker = (*marker).max(sequence);
+                }
+            }
+            Ok(())
         })
     }
 
