@@ -500,6 +500,17 @@ impl ChatEngine {
         Ok(true)
     }
 
+    pub async fn mark_all_read(
+        &self,
+        actor: UserId,
+        through: std::collections::BTreeMap<uuid::Uuid, i64>,
+    ) -> Result<(), ChatError> {
+        self.repository
+            .mark_all_read(actor, through)
+            .await
+            .map_err(ChatError::from)
+    }
+
     pub async fn favorite_circles(&self, actor: UserId) -> Result<Vec<CircleId>, ChatError> {
         self.repository
             .favorite_circles(actor)

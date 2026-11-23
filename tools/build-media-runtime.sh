@@ -68,7 +68,7 @@ apk mkpkg --sign-key /tmp/media.rsa --files /tmp/media-apk --output /tmp/vips-pr
     -I "depends:$needed"
 printf '%s\n' '@glibfix https://dl-cdn.alpinelinux.org/alpine/edge/main' >>/worker-root/etc/apk/repositories
 apk --root /worker-root --arch "$arch" --initdb --no-scripts --no-cache add \
-    /tmp/vips-preview.apk 'glib@glibfix=2.90.0-r0' 'libexpat=2.10.0-r0' 'zlib=1.4-r0'
+    /tmp/vips-preview.apk 'glib@glibfix=2.90.1-r0' 'libexpat=2.10.0-r0' 'zlib=1.4-r0'
 rm /tmp/media.rsa /worker-root/etc/apk/keys/media.rsa.pub
 cp -L /etc/os-release /worker-root/etc/os-release
 cp -L /etc/alpine-release /worker-root/etc/alpine-release

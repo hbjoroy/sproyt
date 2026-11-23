@@ -2620,6 +2620,32 @@ impl ChatRepository for PostgresChatRepository {
         })
     }
 
+    fn mark_all_read<'a>(
+        &'a self,
+        actor: UserId,
+        through: std::collections::BTreeMap<uuid::Uuid, i64>,
+    ) -> RepositoryFuture<'a, ()> {
+        Box::pin(async move {
+            let limits = serde_json::to_string(&through).map_err(storage)?;
+            let mut tx = self.pool.begin().await.map_err(sql_error)?;
+            sqlx::query("with limits as (select key::uuid as channel_id,value::bigint as cutoff from jsonb_each_text($1::jsonb))
+                update channel_memberships as cm set last_read_sequence = (
+                    select max(m.sequence) from messages m where m.channel_id=cm.channel_id and m.sequence<=limits.cutoff
+                ) from limits where cm.channel_id=limits.channel_id and cm.user_id=$2
+                  and exists(select 1 from messages m where m.channel_id=cm.channel_id and m.sequence>cm.last_read_sequence and m.sequence<=limits.cutoff)").bind(&limits).bind(*actor.as_uuid()).execute(&mut *tx).await.map_err(sql_error)?;
+            sqlx::query("with limits as (select key::uuid as channel_id,value::bigint as cutoff from jsonb_each_text($1::jsonb))
+                insert into thread_read_markers(root_message_id,user_id,last_read_sequence,updated_at)
+                select m.parent_message_id,cm.user_id,max(m.sequence),now() from limits
+                join channel_memberships cm on cm.channel_id=limits.channel_id and cm.user_id=$2
+                join messages m on m.channel_id=cm.channel_id and m.sequence<=limits.cutoff
+                where m.parent_message_id is not null group by m.parent_message_id,cm.user_id
+                on conflict(root_message_id,user_id) do update set last_read_sequence=excluded.last_read_sequence,updated_at=excluded.updated_at
+                where thread_read_markers.last_read_sequence<excluded.last_read_sequence").bind(&limits).bind(*actor.as_uuid()).execute(&mut *tx).await.map_err(sql_error)?;
+            tx.commit().await.map_err(sql_error)?;
+            Ok(())
+        })
+    }
+
     fn mark_thread_read<'a>(
         &'a self,
         actor: UserId,

@@ -8,7 +8,7 @@ const owner = "thread-directory-reader";
 const id = (n: number) => `00000000-0000-7000-8000-${String(n).padStart(12, "0")}`;
 type Command = { type: string; request_id?: string; payload?: { channel_id?: string; root_message_id?: string; sequence?: number } };
 
-async function fixture(page: Page, onlyUnread = false) {
+async function fixture(page: Page, onlyUnread = false, bulkRead?: {done:boolean}) {
   const commands: Command[] = [];
   const batches: string[][] = [];
   const errors: string[] = [];
@@ -61,7 +61,7 @@ async function fixture(page: Page, onlyUnread = false) {
         // The older roots are deliberately absent from the currently loaded history.
         case "subscribe_channel": reply("subscription_started", { channel_id: channel, history: [root(onlyUnread ? 1 : 100)] }); break;
         case "list_channel_reactions": reply("channel_reactions_listed", { channel_id: channel, reactions: [] }); break;
-        case "list_thread_summaries": reply("thread_summaries_listed", { channel_id: channel, summaries: replies }); break;
+        case "list_thread_summaries": reply("thread_summaries_listed", { channel_id: channel, summaries: bulkRead?.done ? replies.map(item => ({...item, unread_count:0})) : replies }); break;
         case "load_thread": {
           const n = Number(command.payload?.root_message_id?.slice(-12));
           const parent = root(n);
@@ -146,4 +146,28 @@ test("Kretsrom keeps a directory dot until the unread thread reply is viewed", a
   await expect(pane.getByText("Svar i gammal tråd 1", {exact:true})).toBeVisible();
   await expect.poll(() => commands.some(command => command.type === "mark_thread_read")).toBe(true);
   await expect(dot).toHaveCount(0);
+});
+
+test("mark all read clears thread-only unread activity without opening the thread", async ({page}) => {
+  await page.setViewportSize({width:1280, height:800});
+  const bundle = await readFile(new URL("../dist/app.js", import.meta.url));
+  await page.route(/\/assets\/app\/[^/]+\/app.js$/, route => route.fulfill({contentType:"text/javascript", body:bundle}));
+  await page.addInitScript(() => localStorage.setItem("sproyt.design.kretsrom.v1", "on"));
+  const bulkRead = {done:false};
+  let calls = 0;
+  await page.route("**/api/v1/me/mark-all-read*", async route => {
+    expect(route.request().headers()["x-sproyt-account"]).toBe(owner);
+    expect(route.request().postDataJSON()).toEqual({[channel]:2000});
+    if (++calls === 1) return route.fulfill({status:503});
+    bulkRead.done = true;
+    return route.fulfill({status:204});
+  });
+  const {app, commands} = await fixture(page,true,bulkRead);
+  const action = app.getByRole("button",{name:"Marker alt som lese"});
+  await action.click();
+  await expect(app.getByText("Klarte ikkje å markere som lese. Prøv igjen.")).toBeVisible();
+  await action.click();
+  await expect(action).toHaveCount(0);
+  await expect(app.getByRole("button",{name:"Opne tråd, 1 svar",exact:true})).toBeVisible();
+  expect(commands.some(cmd => cmd.type === "load_thread")).toBe(false);
 });

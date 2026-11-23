@@ -14,6 +14,7 @@ export type TimelineControls = Pick<TimelineProps,
 /** Commands and feature renderers belong to the host. The adapter neither sends
  * messages nor replaces the host's draft, attachment, reaction or modal state. */
 export interface ConversationHostBindings {
+  readonly markAllRead?: ConversationViewProps["navigation"]["markAllRead"];
   readonly favorites?: ConversationViewProps["navigation"]["favorites"];
   readonly ownerId?: string;
   readonly directoryScope?: "circles" | "direct";
@@ -92,6 +93,9 @@ export function createConversationViewProps(snapshot: ConversationSnapshot, host
     title: snapshot.title, context, emptyContent: host.emptyContent,
     contextActions: host.contextActions, onBack: host.onBack, personalSpace: host.personalSpace, isPersonal: channel?.is_personal,
     navigation: {
+      markAllRead: host.markAllRead,
+      hasUnread: snapshot.channels.some(channel => channel.has_unread_thread_replies ||
+        (host.kretsrom ? channel.latest_incoming_root_sequence ?? channel.latest_sequence : channel.latest_sequence) > channel.last_read_sequence),
       favorites: host.favorites, hiddenChannelsLabel: host.hiddenChannelsLabel,
       directoryReady: snapshot.directory.ready, directoryError: snapshot.directory.error,
       onFindChannels: host.onFindChannels, onInvitation: host.onInvitation, onGuide: host.onGuide,

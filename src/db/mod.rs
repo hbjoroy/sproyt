@@ -913,6 +913,34 @@ where
     );
 
     assert_eq!(summary.latest_sequence, reply.sequence);
+    // A reply arriving beyond the captured channel limit stays unread. A retry
+    // with an older limit cannot rewind either marker.
+    for (limit, expected_unread, expected_marker) in [
+        (second.sequence, true, second.sequence),
+        (reply.sequence, false, reply.sequence),
+        (second.sequence, false, reply.sequence),
+    ] {
+        repository
+            .mark_all_read(
+                thread_reader.clone(),
+                [(
+                    *channel.id.as_uuid(),
+                    i64::try_from(u64::from(limit)).unwrap(),
+                )]
+                .into(),
+            )
+            .await
+            .unwrap();
+        let entry = repository
+            .list_channels_for_user(thread_reader.clone())
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|c| c.id == channel.id)
+            .unwrap();
+        assert_eq!(entry.has_unread_thread_replies, expected_unread);
+        assert_eq!(entry.last_read_sequence, expected_marker);
+    }
     let roots = repository
         .thread_root_previews(
             thread_reader.clone(),

@@ -29,7 +29,7 @@ pub(crate) struct SavedStatusInput {
     emoji: String,
 }
 
-async fn favorite_account(
+async fn current_account(
     state: &AppState,
     query: WsQuery,
     headers: &HeaderMap,
@@ -45,7 +45,7 @@ async fn favorite_account(
     {
         return Err((
             axum::http::StatusCode::CONFLICT,
-            "Kontoen vart endra. Last favorittane på nytt.",
+            "Kontoen vart endra. Prøv igjen på rett konto.",
         )
             .into_response());
     }
@@ -57,12 +57,31 @@ async fn favorite_account(
     Ok(principal)
 }
 
+pub(crate) async fn mark_all_read(
+    State(state): State<AppState>,
+    Query(query): Query<WsQuery>,
+    headers: HeaderMap,
+    Json(through): Json<std::collections::BTreeMap<uuid::Uuid, i64>>,
+) -> axum::response::Response {
+    let principal = match current_account(&state, query, &headers).await {
+        Ok(principal) => principal,
+        Err(response) => return response,
+    };
+    if through.values().any(|sequence| *sequence < 0) {
+        return axum::http::StatusCode::BAD_REQUEST.into_response();
+    }
+    match state.chat.mark_all_read(principal.user.id, through).await {
+        Ok(()) => axum::http::StatusCode::NO_CONTENT.into_response(),
+        Err(error) => chat_error_response(error),
+    }
+}
+
 pub(crate) async fn favorite_circles(
     State(state): State<AppState>,
     Query(query): Query<WsQuery>,
     headers: HeaderMap,
 ) -> axum::response::Response {
-    let principal = match favorite_account(&state, query, &headers).await {
+    let principal = match current_account(&state, query, &headers).await {
         Ok(principal) => principal,
         Err(response) => return response,
     };
@@ -106,7 +125,7 @@ async fn change_favorite_circle(
     headers: HeaderMap,
     favorite: bool,
 ) -> axum::response::Response {
-    let principal = match favorite_account(&state, query, &headers).await {
+    let principal = match current_account(&state, query, &headers).await {
         Ok(principal) => principal,
         Err(response) => return response,
     };

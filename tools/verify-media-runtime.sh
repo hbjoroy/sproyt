@@ -13,7 +13,7 @@ docker run --rm --entrypoint /bin/sh local/sproyt-media-runtime-arm64 -ec '
   test -f /worker-root/etc/alpine-release
   grep -q "^ID=alpine$" /worker-root/etc/os-release
   grep -q "^3\.24\." /worker-root/etc/alpine-release
-  apk --root /worker-root --no-network info -e "glib=2.90.0-r0"
+  apk --root /worker-root --no-network info -e "glib=2.90.1-r0"
   apk --root /worker-root --no-network info -e "libexpat=2.10.0-r0"
   apk --root /worker-root --no-network info -e "zlib=1.4-r0"
   if grep -Eq "^P:(libcrypto3|libssl3|libxml2)$" /worker-root/lib/apk/db/installed; then exit 1; fi
@@ -21,7 +21,7 @@ docker run --rm --entrypoint /bin/sh local/sproyt-media-runtime-arm64 -ec '
 '
 docker build --target media-runtime-builder --build-arg TARGETARCH=amd64 -t local/sproyt-media-runtime .
 docker run --rm --mount "type=bind,source=$PWD/tools/media-fixtures,target=/test-fixtures,readonly" --memory=512m --cpus=1 --entrypoint /bin/sh local/sproyt-media-runtime -ec '
-  apk --root /worker-root --no-network info -e "glib=2.90.0-r0"
+  apk --root /worker-root --no-network info -e "glib=2.90.1-r0"
   apk --root /worker-root --no-network info -e "libexpat=2.10.0-r0"
   apk --root /worker-root --no-network info -e "zlib=1.4-r0"
   if grep -Eq "^P:(libcrypto3|libssl3|libxml2)$" /worker-root/lib/apk/db/installed; then exit 1; fi
