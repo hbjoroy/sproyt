@@ -60,3 +60,6 @@ Aim for 44px actual primary touch targets and 32–36px fine-pointer actions. Vi
 ## Validation fixtures
 
 Check 320, 390, 430, 820, 900/901 and 1440 CSS pixels, light/dark, coarse pointer and keyboard, plus enlarged text. Use long circle/channel/person names, status, early-adopter badge, edited time, reactions, threads, tables and mixed-orientation media. Verify no page-level horizontal overflow, no separated action rows, visible channel identity, menu dismissal/focus restoration and intact composer/scroll behavior. Production observations are read-only; use isolated fixtures for sending and destructive actions.
+
+
+On a single-pane Kretsrom screen (600px or narrower), keep existing reactions and thread counts directly actionable. A tap on message text or its byline ellipsis reveals Reager, Svar and Fleire between that message and the next. A tap on a photo opens the original viewer. Holding text or a photo opens the personal reaction picker at the message. Keep links, media controls and status independently accessible. Svar opens the full thread composer.

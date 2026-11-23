@@ -4,7 +4,7 @@ import type { SavedEmojiApi } from "../../saved-emojis";
 
 /** App-owned additions to the shared native popup, retaining its keyboard and focus contract. */
 export function openEmojiPicker(anchor: HTMLElement, api: SavedEmojiApi, options: {
-  title: string; owner?: string | null; closeLabel?: string; onSelect: (emoji: string) => void;
+  inlineContainer?: HTMLElement; title: string; owner?: string | null; closeLabel?: string; onSelect: (emoji: string) => void;
 }): () => void {
   let emojis: string[] = [];
   let managing = false;
@@ -28,6 +28,26 @@ export function openEmojiPicker(anchor: HTMLElement, api: SavedEmojiApi, options
   if (owner) {
     dialog.classList.add("kr-reaction-picker");
     dialog.querySelector(".sp-reaction-head button")!.textContent = "Lukk";
+  }
+  if (options.inlineContainer) {
+    const row = options.inlineContainer.closest("[data-mobile-actions]");
+    const dismissOutside = (event: PointerEvent) => {
+      if (!dialog.contains(event.target as Node)) close();
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); }
+    };
+    const resize = new ResizeObserver(() => {
+      if (!row?.querySelector(".kr-mobile-menu-trigger")?.getClientRects().length) close();
+    });
+    if (row) resize.observe(row);
+    document.addEventListener("pointerdown", dismissOutside, true);
+    document.addEventListener("keydown", escape, true);
+    dialog.addEventListener("close", () => {
+      resize.disconnect();
+      document.removeEventListener("pointerdown", dismissOutside, true);
+      document.removeEventListener("keydown", escape, true);
+    }, { once: true });
   }
   const section = document.createElement("section");
   section.className = "sp-saved-emojis";
@@ -56,7 +76,7 @@ export function openEmojiPicker(anchor: HTMLElement, api: SavedEmojiApi, options
   const pane = anchor.closest(".sp-thread-pane, .sp-channel-pane");
   const composer = pane?.querySelector(".sp-draft-composer");
   const position = () => {
-    if (!dialog.isConnected) return;
+    if (!dialog.isConnected || options.inlineContainer) return;
     const viewport = window.visualViewport;
     const top = (viewport?.offsetTop ?? 0) + 12;
     const bottom = (viewport?.offsetTop ?? 0) + (viewport?.height ?? innerHeight) - 12;

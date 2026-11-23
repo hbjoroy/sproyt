@@ -85,7 +85,7 @@ export function PreviewReactionActions({ message, open, primaryAction, overflowA
         onPointerDown={keepPointerTarget} onClick={event => open(message, event.currentTarget)}><span aria-hidden="true">♡</span><span className="sp-kretsrom-action-label">Reager</span></Button>
       {primaryAction}
       {hasOverflow && <Button className="sp-message-symbol" variant="quiet" aria-label="Fleire meldingsval" title="Fleire meldingsval"
-        onPointerDown={keepPointerTarget} onClick={() => setMenuOpen(true)}><span aria-hidden="true">⋯</span></Button>}
+        onPointerDown={keepPointerTarget} onClick={() => setMenuOpen(true)}><span className="kr-mobile-more-label">Fleire</span><span aria-hidden="true">⋯</span></Button>}
       <Dialog open={menuOpen && hasOverflow} title="Meldingsval" closeLabel="Lukk meldingsvala" onClose={() => setMenuOpen(false)}>
         <div className="sp-message-menu-dialog">
         {overflowActions?.(() => setMenuOpen(false))}
@@ -126,9 +126,12 @@ export function createPreviewReactionPicker(host: PreviewReactionHost, currentOw
       const control = anchor.matches("button") ? anchor : anchor.querySelector("button");
       if (control instanceof HTMLElement) control.focus({ preventScroll: true });
       const owner = anchor.closest(".kr-shell") ? currentOwner() : null;
+      const row = anchor.closest("[data-mobile-actions]");
+      const inlineContainer = row?.querySelector(".kr-mobile-menu-trigger")?.getClientRects().length
+        ? row.querySelector<HTMLElement>(".kr-inline-picker-host") ?? undefined : undefined;
       close = openEmojiPicker(anchor, host.savedEmojis, {
         title: "Reager på meldinga", closeLabel: "Lukk reaksjonsveljaren",
-        owner,
+        owner, inlineContainer,
         onSelect: emoji => {
           if (owner && !host.reactions(message.id).some(item => item.emoji === emoji && item.reactedByMe)) rememberReaction(owner, emoji);
           host.toggleReaction(message.id, emoji);

@@ -161,6 +161,92 @@ export function ConversationMessage(props: MessagePresentation & { readonly mess
   const Row = kretsrom ? KretsromMessage : Message;
   const message = props.message;
   const wrapper = useRef<HTMLDivElement>(null);
+  const menuTrigger = useRef<HTMLButtonElement>(null);
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const currentMessage = useRef(message);
+  currentMessage.current = message;
+  const reactionRequest = useRef(props.onReactionRequest);
+  reactionRequest.current = props.onReactionRequest;
+  const showMobileMenu = kretsrom && !message.deleted_at && Boolean(props.renderActions);
+  useEffect(() => {
+    const row = wrapper.current;
+    const trigger = menuTrigger.current;
+    if (!showMobileMenu || !row || !trigger) return;
+    const interactive = "button,a,input,textarea,select,summary,[role=button],[contenteditable=true],video,audio";
+    let timer: number | undefined;
+    let startX = 0, startY = 0;
+    let held = false;
+    const cancel = () => window.clearTimeout(timer);
+    const down = (event: PointerEvent) => {
+      cancel();
+      held = false;
+      const target = event.target;
+      if (!trigger.getClientRects().length || event.pointerType === "mouse" || !event.isPrimary ||
+          !(target instanceof Element) || !target.closest(".kr-body") ||
+          (target.closest(interactive) && !target.closest(".sp-media-open"))) return;
+      startX = event.clientX;
+      startY = event.clientY;
+      timer = window.setTimeout(() => {
+        held = true;
+        setActionsOpen(true);
+        reactionRequest.current?.(currentMessage.current, trigger);
+      }, 500);
+    };
+    const move = (event: PointerEvent) => {
+      if (Math.hypot(event.clientX - startX, event.clientY - startY) > 10) cancel();
+    };
+    const click = (event: MouseEvent) => {
+      if (held) {
+        held = false;
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      const target = event.target;
+      if (trigger.getClientRects().length && target instanceof Element && target.closest(".kr-body") &&
+          !target.closest(interactive) && !window.getSelection()?.toString()) setActionsOpen(open => !open);
+    };
+    const context = (event: MouseEvent) => {
+      if (trigger.getClientRects().length && event.target instanceof Element &&
+          event.target.closest(".sp-media-open")) event.preventDefault();
+    };
+    row.addEventListener("pointerdown", down);
+    row.addEventListener("pointermove", move);
+    row.addEventListener("pointerup", cancel);
+    row.addEventListener("pointercancel", cancel);
+    row.addEventListener("pointerleave", cancel);
+    row.addEventListener("click", click, true);
+    row.addEventListener("contextmenu", context);
+    return () => {
+      cancel();
+      row.removeEventListener("pointerdown", down);
+      row.removeEventListener("pointermove", move);
+      row.removeEventListener("pointerup", cancel);
+      row.removeEventListener("pointercancel", cancel);
+      row.removeEventListener("pointerleave", cancel);
+      row.removeEventListener("click", click, true);
+      row.removeEventListener("contextmenu", context);
+    };
+  }, [showMobileMenu]);
+  useEffect(() => {
+    if (!actionsOpen) return;
+    const outside = (event: PointerEvent) => {
+      if (event.target instanceof Element && !event.target.closest("dialog") &&
+          !wrapper.current?.contains(event.target)) setActionsOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !document.querySelector("dialog[open]")) {
+        setActionsOpen(false);
+        menuTrigger.current?.focus();
+      }
+    };
+    document.addEventListener("pointerdown", outside);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("pointerdown", outside);
+      document.removeEventListener("keydown", escape);
+    };
+  }, [actionsOpen]);
   const fullTimestamp = formatMessageDateTime(message.sent_at);
   const accessibilityId = useId();
   const timestampTooltipId = `message-time-${accessibilityId}`;
@@ -289,13 +375,16 @@ export function ConversationMessage(props: MessagePresentation & { readonly mess
     </div>
   </>;
   return <>{boundary}
-    <div ref={wrapper} data-avatar-tone={kretsrom ? (message.sender_id.charCodeAt(message.sender_id.length - 1) % 4) : undefined} data-message-id={message.id} data-message-sequence={message.sequence} data-date-start={props.dateLabel ? "true" : undefined}>
+    <div ref={wrapper} data-mobile-actions={showMobileMenu ? (actionsOpen ? "open" : "closed") : undefined} data-avatar-tone={kretsrom ? (message.sender_id.charCodeAt(message.sender_id.length - 1) % 4) : undefined} data-message-id={message.id} data-message-sequence={message.sequence} data-date-start={props.dateLabel ? "true" : undefined}>
     <Row author={author} avatar={Array.from(message.sender_display_name.trim())[0]} authorContent={<>
         <strong>{author}</strong>
         {kretsrom && props.renderAuthorStatus?.(message)}
         {earlyAdopter && <button type="button" className="sp-message-early-adopter"
           aria-label="Blant dei første 50 på Sprøyt" title="Blant dei første 50 på Sprøyt">✨</button>}
         {!kretsrom && props.renderAuthorStatus?.(message)}
+        {showMobileMenu && <button ref={menuTrigger} className="kr-mobile-menu-trigger" type="button"
+          aria-label="Vis meldingshandlingar" aria-expanded={actionsOpen}
+          onClick={() => setActionsOpen(open => !open)}>⋯</button>}
       </>} dateTime={message.sent_at}
         time={props.formatTime(message.sent_at)}
         status={message.deleted_at ? "Sletta" : visibleStatus ?? (message.edited_at ? "Redigert" : undefined)}
@@ -304,6 +393,7 @@ export function ConversationMessage(props: MessagePresentation & { readonly mess
         {message.deleted_at ? <p>Meldinga er sletta.</p> : props.renderContent(message)}
         {!props.threadParent && props.renderThreadSummary?.(message)}
     </Row>
+    {showMobileMenu && <div className="kr-inline-picker-host" />}
     <span id={timestampTooltipId} className="sp-message-time-tooltip" role="tooltip">{fullTimestamp}</span>
     {earlyAdopter && <span id={earlyAdopterTooltipId} className="sp-early-adopter-tooltip" role="tooltip">Blant dei første 50 på Sprøyt</span>}
   </div></>;

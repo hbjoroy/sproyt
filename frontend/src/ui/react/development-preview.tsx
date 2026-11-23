@@ -970,7 +970,7 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
         const isRoot = message.parent_message_id === null && !context?.threadParent;
         const threadAction = isRoot ? <Button className="sp-message-symbol" variant="quiet"
           aria-label={countedReply ? "Opne tråd, " + replyLabel + (unread ? ", " + unreadLabel : "") : "Svar i tråd"} title="Svar i tråd"
-          data-thread-trigger={message.id} aria-expanded={snapshot.thread?.rootMessageId === message.id}
+          data-counted-reply={countedReply || undefined} data-thread-trigger={message.id} aria-expanded={snapshot.thread?.rootMessageId === message.id}
           onPointerDown={event => { if (event.pointerType === "mouse" && event.button === 0) event.preventDefault(); }}
           onClick={event => openMessageThread(message.id, event.currentTarget)}>{!kretsrom && <ThreadIcon />}<span className="sp-kretsrom-action-label">{replyLabel}</span>
             {unread > 0 && <span className="sp-thread-unread">{unreadLabel}</span>}</Button> : null;
