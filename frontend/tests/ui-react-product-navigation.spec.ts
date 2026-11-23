@@ -289,7 +289,7 @@ test("Kretsrom retains normal circle and channel order with shared and hidden ch
   })));
   await expect(groups).toHaveCount(31);
   const normal = await snapshot();
-  expect(normal[0].id).toBe("scope:shared");
+  expect(normal[0]?.id).toBe("scope:shared");
   expect(normal.some(group => group.folded)).toBe(true);
   expect(normal.find(group => group.id === "circle:" + circleId(0))?.channels).toEqual(["Kanal 01", "Arkiv 1"]);
   await page.evaluate(() => localStorage.setItem("sproyt.design.kretsrom.v1", "on"));
