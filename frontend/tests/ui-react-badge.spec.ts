@@ -110,14 +110,16 @@ test("Kretsrom keeps status beside the name and actions compact", async ({ page 
   await composer.press("Control+Enter");
   const message = preview.locator("[data-message-id]").filter({ hasText: body }).last();
   const status = message.getByRole("button", {name: /^Vis status:/});
-  await expect(status).toHaveText("☀️");
+  await expect(status.locator(".kr-status-label")).toHaveText("Ute i sola");
+  const label = status.locator(".kr-status-label");
+  expect(await label.evaluate(el => el.clientWidth >= el.scrollWidth && el.clientWidth > 0)).toBe(true);
   const byline = message.locator(".kr-byline");
   const name = (await byline.locator("strong").boundingBox())!;
   const emoji = (await status.boundingBox())!;
   expect(emoji.x).toBeGreaterThan(name.x);
   expect(emoji.y).toBeLessThan(name.y + name.height);
   const coarse = await page.evaluate(() => matchMedia("(pointer: coarse)").matches);
-  expect((await message.locator(".kr-footer").boundingBox())!.height).toBe(coarse ? 36 : 32);
+  expect((await message.locator(".kr-footer").boundingBox())!.height).toBe(coarse ? 32 : 26);
   await status.click();
   const detail = message.locator(".kr-status-detail");
   await expect(detail).toBeVisible();

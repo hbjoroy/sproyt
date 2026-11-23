@@ -2,7 +2,7 @@
 
 ## Kretsrom
 
-Place the personal status emoji immediately after the sender name on desktop and mobile. Use a speech bubble for text-only status. Press or use the keyboard to read the full status, with editing available to its owner. Keep the timeline action row 32px high with a fine pointer and 36px high with 44px-wide buttons on touch screens. Keep 6px between messages.
+Place the personal status emoji immediately after the sender name on desktop and mobile. Use a speech bubble for text-only status. Press or use the keyboard to read the full status, with editing available to its owner. Show status text in the remaining byline space; let it shrink before the sender and time. Use a 20px visible reaction pill inside the 26px action row (32px on touch, at least 44px wide). Keep media captions and original/download controls together in a 24px row (32px on touch). Keep 6px between messages.
 
 Use the selected Pratebok and Kretsen først prototypes for this edition. Kretsrom owns its layout through KretsromShell and KretsromMessage. The editorial layout rules below apply to the earlier edition.
 
