@@ -119,7 +119,7 @@ test("Kretsrom keeps status beside the name and actions compact", async ({ page 
   expect(emoji.x).toBeGreaterThan(name.x);
   expect(emoji.y).toBeLessThan(name.y + name.height);
   const coarse = await page.evaluate(() => matchMedia("(pointer: coarse)").matches);
-  expect((await message.locator(".kr-footer").boundingBox())!.height).toBe(coarse ? 32 : 26);
+  expect((await message.locator(".kr-footer").boundingBox())!.height).toBe(await message.locator(".kr-mobile-menu-trigger").isVisible() ? 0 : coarse ? 32 : 26);
   await status.click();
   const detail = message.locator(".kr-status-detail");
   await expect(detail).toBeVisible();

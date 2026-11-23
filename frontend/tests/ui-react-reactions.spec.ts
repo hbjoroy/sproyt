@@ -164,8 +164,19 @@ test("Kretsrom shows saved choices first and keeps counts beside the message act
   await composer.press("Control+Enter");
   const message = pane.locator("[data-message-id]").filter({ hasText: body });
   const add = message.getByRole("button", { name: "Legg til reaksjon", exact: true });
+  const trigger = message.getByRole("button", { name: "Vis meldingshandlingar" });
+  const mobileMenu = await trigger.isVisible();
+  if (mobileMenu) {
+    await expect(add).toBeHidden();
+    await message.locator(".sp-media-open").click();
+    await expect(page.getByRole("dialog")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await trigger.click();
+    await expect(message.getByRole("button", {name:"Fleire meldingsval"})).toBeVisible();
+  }
   await add.click();
   const picker = page.getByRole("dialog", { name: "Reager på meldinga" });
+  if (mobileMenu) await expect(message.locator(".kr-inline-picker-host dialog")).toBeVisible();
   const choices = picker.locator(":scope > .sp-emoji-grid button");
   await expect(choices).toHaveCount(6);
   await expect(choices.first()).toHaveText("🛶");
@@ -178,11 +189,29 @@ test("Kretsrom shows saved choices first and keeps counts beside the message act
   expect((await caption.boundingBox())!.height).toBeLessThanOrEqual(touch ? 32 : 24);
   expect((await badge.locator(".sp-reaction-count").boundingBox())!.height).toBe(20);
   const [chip, action, reply] = await Promise.all([badge.boundingBox(), add.boundingBox(), message.getByRole("button", { name: "Svar i tråd", exact: true }).boundingBox()]);
-  for (const box of [action!, reply!]) expect(Math.abs(chip!.y + chip!.height / 2 - box.y - box.height / 2)).toBeLessThan(5);
+  if (mobileMenu) expect(action!.y).toBeGreaterThanOrEqual(chip!.y + chip!.height);
+  else for (const box of [action!, reply!]) expect(Math.abs(chip!.y + chip!.height / 2 - box.y - box.height / 2)).toBeLessThan(5);
   await add.click();
   await picker.getByRole("button", { name: "Fleire", exact: true }).click();
   await expect(picker.getByRole("button", { name: "Fest reaksjonar" })).toBeVisible();
   await expect(picker.getByRole("searchbox")).toBeVisible();
   await picker.getByRole("button", { name: "Lukk reaksjonsveljaren" }).click();
   await expect(add).toBeFocused();
+  if (mobileMenu) {
+    await trigger.click();
+    await expect(add).toBeHidden();
+    await expect(badge).toBeVisible();
+    const photo = message.locator(".sp-media-open");
+    await photo.evaluate(el => el.dispatchEvent(new PointerEvent("pointerdown", {bubbles:true, pointerType:"touch", isPrimary:true, pointerId:7})));
+    await expect(message.locator(".kr-inline-picker-host dialog")).toBeVisible();
+    await photo.evaluate(el => el.dispatchEvent(new PointerEvent("pointerup", {bubbles:true, pointerType:"touch", isPrimary:true, pointerId:7})));
+    await photo.dispatchEvent("click");
+    await expect(page.getByRole("dialog")).toHaveCount(1);
+    await picker.getByRole("button", {name:"Lukk reaksjonsveljaren"}).click();
+    await message.getByRole("button", {name:"Fleire meldingsval"}).click();
+    await expect(page.getByRole("dialog", {name:"Meldingsval"})).toBeVisible();
+    await page.keyboard.press("Escape");
+    await message.getByRole("button", {name:"Svar i tråd", exact:true}).click();
+    await expect(page.locator(".sp-thread-pane textarea").first()).toBeVisible();
+  }
 });

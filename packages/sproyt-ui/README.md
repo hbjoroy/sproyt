@@ -1,4 +1,4 @@
-# Sprøyt UI — 0.2.4
+# Sprøyt UI — 0.2.5
 
 Sprøyt sin nye klientutgåve er dokumentert i [Kretsrom](../../docs/kretsrom.md), med oversikt over vurderte og importerte flater.
 
@@ -6,7 +6,7 @@ Reusable editorial web components for React 18/19 and Vue 3.5+, with matching li
 
 ## Use in another project
 
-Copy `../../frontend/vendor/sproyt-ui-0.2.4.tgz` into that project's `vendor/` folder and run `npm install ./vendor/sproyt-ui-0.2.4.tgz` (or your package manager's equivalent). Install only your chosen framework. Import `@sproyt/ui/styles.css` once and components from `@sproyt/ui/react` or `@sproyt/ui/vue`.
+Copy `../../frontend/vendor/sproyt-ui-0.2.5.tgz` into that project's `vendor/` folder and run `npm install ./vendor/sproyt-ui-0.2.5.tgz` (or your package manager's equivalent). Install only your chosen framework. Import `@sproyt/ui/styles.css` once and components from `@sproyt/ui/react` or `@sproyt/ui/vue`.
 
 See [component contracts](docs/components.md) and [design rules](docs/design.md).
 
