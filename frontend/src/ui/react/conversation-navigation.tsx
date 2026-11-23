@@ -263,7 +263,7 @@ function AccountNavigation(props: NavigationProps) {
       </details>}
       {props.directoryReady === false ? <Status>{props.directoryError || "Hentar samtalane dine …"}</Status> : <>
       {props.directoryError && <Status tone="error">{props.directoryError}</Status>}
-      {!kretsrom && sharedGroups.map(groupSection)}
+      {sharedGroups.map(groupSection)}
       {(foldOthers ? preferred : circles).map(groupSection)}
       {foldOthers && <div className="sp-product-nav-others">
         <button type="button" className="sp-product-nav-disclosure" aria-expanded={othersOpen} aria-controls={`${id}-others`} aria-disabled={searching || undefined}
@@ -273,7 +273,6 @@ function AccountNavigation(props: NavigationProps) {
         </button>
         <div id={`${id}-others`} hidden={!othersOpen}>{others.map(groupSection)}</div>
       </div>}
-      {kretsrom && sharedGroups.map(groupSection)}
       {sharedGroups.length + circles.length === 0 && hiddenCount === 0 && <DirectoryEmptyState scope="circles" searching={searching} onFindChannels={props.onFindChannels} onInvitation={props.onInvitation} />}
       {sharedGroups.length + circles.length > 0 && hiddenCount === 0 && !searching && [...sharedGroups, ...circles].every(group => !group.conversations.length)
         && <p className="sp-product-nav-empty">Ingen kanalar enno. Opne menyen ved ein krets for å finne eller opprette ein kanal.</p>}

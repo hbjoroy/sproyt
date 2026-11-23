@@ -9,7 +9,7 @@ const directId = "00000000-0000-7000-8000-000000007301";
 const otherDirectId = "00000000-0000-7000-8000-000000007302";
 type Command = { type: string; request_id?: string; payload?: { channel_id?: string; circle_id?: string; sequence?: number } };
 
-async function fixture(page: Page, start = `channel=${channelId(29)}`, ranked = false, withHidden = false) {
+async function fixture(page: Page, start = `channel=${channelId(29)}`, ranked = false, withHidden = false, withShared = false) {
   if (process.env.SPROYT_E2E_EMBEDDED_CLIENT !== "1") {
     const bundle = await readFile(new URL("../dist/app.js", import.meta.url), "utf8");
     await page.route(/\/assets\/app\/[^/]+\/app.js$/, route => route.fulfill({ contentType: "text/javascript", body: bundle }));
@@ -57,7 +57,7 @@ async function fixture(page: Page, start = `channel=${channelId(29)}`, ranked = 
         case "ping": reply("pong"); break;
         case "list_users": reply("users_listed", { users: [] }); break;
         case "list_my_circles": reply("circles_listed", { circles: circles.map(circle => [circle, "member"]) }); break;
-        case "list_my_channels": reply("channels_listed", { channels: [...channels, ...directs] }); break;
+        case "list_my_channels": reply("channels_listed", { channels: [...channels, ...directs, ...(withShared ? [{ ...channels[0], id: channelId(70), name: "Fellesprat", circle_id: null, latest_sequence: 0 }] : [])] }); break;
         case "list_mentions": reply("mentions_listed", { mentions: [] }); break;
         case "list_tasks": reply("tasks_listed", { tasks: [] }); break;
         case "list_joinable_channels": reply("joinable_channels_listed", { circle_id: command.payload?.circle_id, channels: [] }); break;
@@ -276,4 +276,25 @@ test("hidden channels remain compact within their own circles and searchable", a
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
     if (process.env.SPROYT_HIDDEN_SCREENSHOTS) await page.screenshot({ path: `${process.env.SPROYT_HIDDEN_SCREENSHOTS}/${testInfo.project.name}-${mode}-${width}.png` });
   }
+});
+
+test("Kretsrom retains normal circle and channel order with shared and hidden channels", async ({ page }) => {
+  const { app } = await fixture(page, undefined, false, true, true);
+  const groups = app.locator(".sp-product-nav-group");
+  const snapshot = () => groups.evaluateAll(nodes => nodes.map(group => ({
+    id: group.getAttribute("data-conversation-group"),
+    channels: Array.from(group.querySelectorAll(".sp-conversation-name"), el =>
+      el.firstChild?.textContent?.replace(/^#\s*/, "")),
+    folded: Boolean(group.closest(".sp-product-nav-others")),
+  })));
+  await expect(groups).toHaveCount(31);
+  const normal = await snapshot();
+  expect(normal[0]?.id).toBe("scope:shared");
+  expect(normal.some(group => group.folded)).toBe(true);
+  expect(normal.find(group => group.id === "circle:" + circleId(0))?.channels).toEqual(["Kanal 01", "Arkiv 1"]);
+  await page.evaluate(() => localStorage.setItem("sproyt.design.kretsrom.v1", "on"));
+  await page.reload();
+  await expect(app.locator(".kr-shell")).toBeAttached();
+  await expect(groups).toHaveCount(normal.length);
+  expect(await snapshot()).toEqual(normal);
 });
