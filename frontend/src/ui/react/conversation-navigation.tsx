@@ -31,6 +31,8 @@ function unreadCount(groups: readonly ConversationGroup[]): number {
 }
 
 function UnreadBadge({ count }: { readonly count: number }) {
+  const kretsrom = useContext(KretsromContext);
+  if (kretsrom && count > 0) return <span role="img" aria-label="Nye meldingar" className="kr-unread-dot" />;
   return count > 0 ? <span className="sp-badge" aria-label={`${count} uleste`}>{count > 999 ? "999+" : count}</span> : null;
 }
 

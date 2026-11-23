@@ -102,7 +102,9 @@ export function createConversationViewProps(snapshot: ConversationSnapshot, host
         id: group.id, name: group.name,
         // Notification subscriptions are not a mute policy. Do not map disabled
         // notifications to the library's `muted` appearance.
-        conversations: group.conversations.map(item => ({ id: item.id, name: item.name, unread: item.unread,
+        conversations: group.conversations.map(item => ({ id: item.id, name: item.name, unread: host.kretsrom
+          ? Number(Boolean(item.channel.has_unread_thread_replies) || (item.channel.latest_incoming_root_sequence ?? item.channel.latest_sequence) > item.channel.last_read_sequence)
+          : item.unread,
           excerpt: item.channel.latest_excerpt && messageExcerpt(item.channel.latest_excerpt), directActivity: item.channel.direct_activity, hidden: item.channel.hidden,
           directGroup: !!item.channel.is_direct && !item.channel.direct_user_id,
           action: host.renderConversationAction?.(item) })),

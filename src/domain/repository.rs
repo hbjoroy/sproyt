@@ -684,6 +684,11 @@ impl AccountExportRepository for InMemoryChatRepository {
                     let messages = state.messages.get(&channel.id).cloned().unwrap_or_default();
                     Some(ExportedChannel {
                         channel: ChannelSummary {
+                            latest_incoming_root_sequence: Some(
+                                state.latest_incoming_root_sequence(&channel.id, &actor),
+                            ),
+                            has_unread_thread_replies: state
+                                .has_unread_thread_replies(&channel.id, &actor),
                             latest_excerpt: None,
                             events_enabled: state.events_enabled_channels.contains(&channel.id),
                             hidden: state.hidden_channels.contains(&channel.id),
@@ -2280,6 +2285,11 @@ impl ChatRepository for InMemoryChatRepository {
                 .filter_map(|membership| {
                     let channel = state.channels.get(&membership.channel_id)?;
                     Some(ChannelSummary {
+                        latest_incoming_root_sequence: Some(
+                            state.latest_incoming_root_sequence(&channel.id, &actor),
+                        ),
+                        has_unread_thread_replies: state
+                            .has_unread_thread_replies(&channel.id, &actor),
                         latest_excerpt: state
                             .messages
                             .get(&channel.id)
@@ -3089,6 +3099,42 @@ struct StoredEnrollmentInvitation {
 
 #[cfg(test)]
 impl RepositoryState {
+    fn latest_incoming_root_sequence(
+        &self,
+        channel: &ChannelId,
+        actor: &UserId,
+    ) -> ChannelSequence {
+        self.messages
+            .get(channel)
+            .and_then(|messages| {
+                messages.iter().rev().find(|msg| {
+                    msg.parent_message_id.is_none()
+                        && msg.deleted_at.is_none()
+                        && &msg.sender_id != actor
+                })
+            })
+            .map_or(ChannelSequence::new(0), |msg| msg.sequence)
+    }
+
+    fn has_unread_thread_replies(&self, channel: &ChannelId, actor: &UserId) -> bool {
+        self.messages
+            .get(channel)
+            .into_iter()
+            .flatten()
+            .any(|message| {
+                message.deleted_at.is_none()
+                    && &message.sender_id != actor
+                    && message.parent_message_id.is_some_and(|root| {
+                        let read = self
+                            .thread_read_markers
+                            .get(&(root, actor.clone()))
+                            .copied()
+                            .unwrap_or(ChannelSequence::new(0));
+                        message.sequence > read
+                    })
+            })
+    }
+
     fn open_personal_space(&mut self, owner: UserId) -> Result<Channel, RepositoryError> {
         if !self
             .users

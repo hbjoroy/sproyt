@@ -903,6 +903,15 @@ where
         .unwrap();
     assert_eq!(summary.reply_count, 1);
     assert_eq!(summary.unread_count, 1);
+    assert!(
+        repository
+            .list_channels_for_user(thread_reader.clone())
+            .await
+            .unwrap()
+            .iter()
+            .any(|entry| entry.id == channel.id && entry.has_unread_thread_replies)
+    );
+
     assert_eq!(summary.latest_sequence, reply.sequence);
     let roots = repository
         .thread_root_previews(

@@ -580,6 +580,9 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
   let unsubscribe = () => {};
   let mounted: ReturnType<typeof mountConversationView> | undefined;
   let resumedThread = false;
+  let threadVisit = "";
+  let threadBoundary: number | undefined;
+  let threadBoundaryResolved = false;
   let renderedOwner = host.community.selfId();
   let renderedOwnerEpoch = 0;
   let renderedEntry = "";
@@ -713,13 +716,29 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
     const threadMessageIds = snapshot.thread
       ? [snapshot.thread.root?.id, ...snapshot.thread.replies.filter(message => !message.deleted_at).map(message => message.id)].filter((id): id is string => Boolean(id))
       : [];
+    const visit = snapshot.thread && kretsrom ? JSON.stringify([owner, historyState.entryId, snapshot.thread.rootMessageId]) : "";
+    if (visit !== threadVisit) {
+      threadVisit = visit;
+      threadBoundary = undefined;
+      threadBoundaryResolved = false;
+    }
+    let firstUnreadId: string | undefined;
+    if (visit && snapshot.thread && !threadBoundaryResolved && snapshot.threadSummaryStatus.ready && !host.threadLoad().loading) {
+      const count = snapshot.thread.summary?.unread_count ?? 0;
+      const incoming = snapshot.thread.replies.filter(reply => !reply.deleted_at && reply.sender_id !== owner);
+      if (!count || incoming.length >= count) {
+        threadBoundaryResolved = true;
+        const first = count ? incoming[incoming.length - count] : undefined;
+        if (first) { threadBoundary = first.sequence - 1; firstUnreadId = first.id; }
+      }
+    }
     threadScroll.prepare({
       restorationId: `${owner}:${historyState.entryId}`,
       restoredPosition: historyState.positions.find(p => p.key === `thread:${snapshot.thread?.rootMessageId}`)?.position,
       key: snapshot.thread ? `thread:${snapshot.thread.rootMessageId}` : null,
       messageIds: threadMessageIds,
       loading: host.threadLoad().loading,
-      revealMessageId: scrollIntent.threadRevealMessageId
+      revealMessageId: scrollIntent.threadRevealMessageId ?? firstUnreadId
     });
     const personal = !!snapshot.activeChannel?.is_personal;
     const goToLatest = () => {
@@ -924,6 +943,7 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
     },
     threadTimeline: {
       ...host.threadLoad(),
+      unreadAfterSequence: threadBoundary,
       viewportRef: threadScroll.viewportRef,
       onScroll: threadScroll.onScroll,
       onRetry() { if (snapshot.thread) host.openThread(snapshot.thread.rootMessageId); update(); }
@@ -966,7 +986,7 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
         const countedReply = kretsrom && replies > 0;
         const replyLabel = countedReply ? snapshot.threadSummaryStatus.ready ? replies + " svar" : "Opne tråd" : "Svar";
         const unread = countedReply && snapshot.threadSummaryStatus.ready ? threadSummary?.unread_count ?? 0 : 0;
-        const unreadLabel = unread === 1 ? "1 ulest" : unread + " uleste";
+        const unreadLabel = unread === 1 ? "1 nytt" : unread + " nye";
         const isRoot = message.parent_message_id === null && !context?.threadParent;
         const threadAction = isRoot ? <Button className="sp-message-symbol" variant="quiet"
           aria-label={countedReply ? "Opne tråd, " + replyLabel + (unread ? ", " + unreadLabel : "") : "Svar i tråd"} title="Svar i tråd"

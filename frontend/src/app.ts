@@ -3837,6 +3837,9 @@
           knownChannels = event.payload.channels.map(channel => {
             const previous = knownChannels.find(item => item.id === channel.id);
             return { ...channel,
+              latest_incoming_root_sequence: previous && previous.latest_sequence > channel.latest_sequence
+                ? Math.max(previous.latest_incoming_root_sequence ?? 0, channel.latest_incoming_root_sequence ?? 0) : channel.latest_incoming_root_sequence,
+              has_unread_thread_replies: previous && previous.latest_sequence > channel.latest_sequence ? previous.has_unread_thread_replies : channel.has_unread_thread_replies,
               latest_excerpt: previous && previous.latest_sequence > channel.latest_sequence ? previous.latest_excerpt : channel.latest_excerpt,
               direct_activity: previous && previous.latest_sequence > channel.latest_sequence && previous.direct_activity
                 ? { ...(channel.direct_activity ?? previous.direct_activity), last_message_at: previous.direct_activity.last_message_at }
@@ -4068,6 +4071,7 @@
           clearThreadSummaryTimer(); threadSummaryRequestId = null; threadSummaryLoading = false;
           if (result === "retry") { requestThreadSummaries(event.payload.channel_id); return; }
           threadSummaryReady = true; threadSummaryError = "";
+          updateDirectoryThreadUnread();
           renderTimeline({ preserveScroll: true });
           return;
         }
@@ -4110,6 +4114,7 @@
           visibleRead.complete(event.request_id);
           if (result === "stale") return;
           if (result === "retry") { threadSummaryReady = false; requestThreadSummaries(); return; }
+          updateDirectoryThreadUnread();
           renderTimeline({ preserveScroll: true });
           return;
         }
@@ -5197,10 +5202,19 @@
         sendCommand("list_my_channels");
       }
 
+      function updateDirectoryThreadUnread(): void {
+        const channel = knownChannels.find(item => item.id === activeChannelId);
+        if (channel && threadSummaryReady) channel.has_unread_thread_replies = [...threadSummaries.values()].some(item => item.unread_count > 0);
+      }
+
       function updateLatestSequence(message: ChatMessage): void {
         const { channel_id: channelId, sequence } = message;
         const channel = knownChannels.find((item) => item.id === channelId);
         if (!channel) return;
+        if (!message.parent_message_id && !message.deleted_at && message.sender_id !== currentParticipantId && channel.latest_incoming_root_sequence !== undefined) {
+          channel.latest_incoming_root_sequence = Math.max(channel.latest_incoming_root_sequence, sequence);
+        }
+        if (message.parent_message_id && !message.deleted_at && message.sender_id !== currentParticipantId && sequence > channel.latest_sequence) channel.has_unread_thread_replies = true;
         if (!message.parent_message_id && !message.deleted_at && sequence >= channel.latest_sequence) {
           channel.latest_excerpt = message.sender_display_name + " · " + Array.from(message.body).slice(0, 96).join("");
         }

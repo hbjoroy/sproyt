@@ -245,6 +245,12 @@ impl Eq for DirectActivity {}
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ChannelSummary {
+    /// Includes replies by other senders beyond this member's per-thread marker.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub has_unread_thread_replies: bool,
+    /// Latest visible top-level message from another sender, for independent channel and thread indicators.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_incoming_root_sequence: Option<ChannelSequence>,
     /// Latest undeleted top-level message in this membership's channel.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latest_excerpt: Option<String>,

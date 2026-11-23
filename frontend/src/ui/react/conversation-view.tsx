@@ -365,7 +365,7 @@ export function ConversationMessage(props: MessagePresentation & { readonly mess
   const author = props.formatAuthor?.(message) ?? message.sender_display_name;
   const boundary = (props.dateLabel || props.unreadBoundary) && <div className="sp-reading-boundary">
     {props.dateLabel && <div className="sp-date sp-kicker">{kretsrom ? kretsromDayLabel(message.sent_at) : props.dateLabel}</div>}
-    {props.unreadBoundary && <div className="sp-unread-boundary" role="separator" aria-label="Uleste meldingar">Uleste meldingar</div>}
+    {props.unreadBoundary && <div className="sp-unread-boundary" role="separator" aria-label={kretsrom ? "Nytt sidan sist" : "Uleste meldingar"}>{kretsrom ? "Nytt sidan sist" : "Uleste meldingar"}</div>}
   </div>;
   if (message.deleted_at && !props.threadParent) return <>
     {boundary}
