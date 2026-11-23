@@ -56,7 +56,7 @@ function ReactionBadge({ reaction, onToggle, onPointerDown }: {
     <Button aria-pressed={reaction.reactedByMe} aria-describedby={tipOpen ? tipId : undefined}
       onPointerDown={onPointerDown} aria-label={`${reaction.emoji}: ${reaction.count} reaksjonar`}
       onFocus={() => setTipOpen(true)} onBlur={() => setTipOpen(false)}
-      onClick={() => { if (!suppressClick.current) onToggle(); }}>{reaction.emoji} {reaction.count}</Button>
+      onClick={() => { if (!suppressClick.current) onToggle(); }}><span className="sp-reaction-count">{reaction.emoji} {reaction.count}</span></Button>
     {tipOpen && <span id={tipId} role="tooltip" className="sp-reaction-tooltip">
       <strong aria-hidden="true">{reaction.emoji}</strong> {names}
     </span>}

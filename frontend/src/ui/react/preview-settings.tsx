@@ -196,7 +196,10 @@ export function MessageProfileStatus({ host, userId, own, compact = false }: { h
   if (!status && !open) return null;
   if (compact) return <>
     {status && <button ref={trigger} type="button" className="kr-status-trigger" popoverTarget={statusId}
-      aria-label={`Vis status: ${status}`} title={status}>{profile?.status_emoji.trim() || "💬"}</button>}
+      aria-label={`Vis status: ${status}`} title={status}>
+      <span>{profile?.status_emoji.trim() || "💬"}</span>
+      <span className="kr-status-label">{profile?.status_text.trim()}</span>
+    </button>}
     <div id={statusId} popover="auto" className="kr-status-detail" aria-label="Personleg status">
       <p>{status}</p>
       {own && <Button variant="quiet" onClick={event => {

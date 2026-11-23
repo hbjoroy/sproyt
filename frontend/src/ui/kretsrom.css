@@ -87,14 +87,6 @@
 
 .kr-footer .kr-reactions, .kr-footer .sp-message-reaction-row { display: contents; }
 .kr-footer .kr-actions { align-items: center; }
-.kr-footer .sp-reaction-badge-wrap > .sp-button {
-  min-height: 32px; border: 1px solid var(--sp-line); border-radius: 20px;
-  padding: 3px 8px; font: 12px/1.4 "Segoe UI",sans-serif; background: var(--sp-chrome);
-}
-.kr-footer .sp-reaction-badge-wrap > [aria-pressed=true] { background: var(--sp-accent); color: var(--sp-on-accent); }
-@media (pointer: coarse) {
-  .kr-footer .sp-reaction-badge-wrap > .sp-button { min-width: 44px; min-height: 44px; }
-}
 .kr-reaction-picker.sp-reaction-picker {
   left: var(--kr-picker-x) !important; top: var(--kr-picker-y) !important; box-sizing: border-box;
   width: var(--kr-picker-width, min(420px, calc(100vw - 24px))); border: 1px solid var(--sp-line); border-radius: 16px;
@@ -111,11 +103,28 @@
 .kr-reaction-picker[data-expanded=false] .sp-custom-reaction, .kr-reaction-picker .sp-help:empty { display: none; }
 .kr-reaction-picker .sp-reaction-more { margin: 0; border: 0; width: auto; padding-inline: 8px; }
 
-#sproyt-react-preview .kr-footer :is(.sp-message-primary-actions, .sp-reaction-badge-wrap) > .sp-button {
-  min-height: 32px; height: auto; padding-block: 2px;
+/* The outlined count sits inside a larger, independent tap target. */
+.kr-footer .sp-reaction-count {
+  display: inline-flex; align-items: center; padding: 1px 6px; border: 1px solid var(--sp-line);
+  border-radius: 999px; background: var(--sp-chrome); color: var(--sp-text); font: 12px/16px "Segoe UI",sans-serif;
 }
+.kr-footer [aria-pressed=true] .sp-reaction-count { background: var(--sp-accent); color: var(--sp-on-accent); }
+#sproyt-react-preview .kr-footer :is(.sp-message-primary-actions, .sp-reaction-badge-wrap) > .sp-button {
+  min-height: 26px; height: auto; padding-block: 0;
+}
+#sproyt-react-preview .kr-footer .sp-reaction-badge-wrap > .sp-button {
+  display: inline-grid; place-items: center; padding: 0; border: 0; background: transparent;
+}
+.kr-body .sp-media-figure { margin-block: 2px 0; }
+.kr-body .sp-media-figure figcaption { padding-block: 0; align-items: center; }
+#sproyt-react-preview .kr-body figcaption :is(.sp-media-original,.sp-media-download) {
+  min-height: 24px; padding-block: 0; line-height: 1.1;
+}
+.kr-body:has(.sp-media-figure) { margin-bottom: 0; }
+.kr-body figcaption > span { flex-shrink: 1; max-width: 100%; }
 @media (pointer: coarse) {
   #sproyt-react-preview .kr-footer :is(.sp-message-primary-actions, .sp-reaction-badge-wrap) > .sp-button {
-    min-height: 36px; min-width: 44px;
+    min-height: 32px; min-width: 44px;
   }
+  #sproyt-react-preview .kr-body figcaption :is(.sp-media-original,.sp-media-download) { min-height: 32px; min-width: 44px; }
 }

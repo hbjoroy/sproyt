@@ -155,6 +155,11 @@ test("Kretsrom shows saved choices first and keeps counts beside the message act
   const pane = page.locator(".kr-shell .sp-channel-pane");
   const composer = pane.getByRole("textbox", { name: "Skriv melding" });
   const body = `Reaksjonar i Kretsrom ${Date.now()}`;
+  await pane.locator('input[type="file"]').setInputFiles({
+    name: "test.png", mimeType: "image/png",
+    buffer: Buffer.from(await page.evaluate(() => document.createElement("canvas").toDataURL().split(",")[1]!), "base64"),
+  });
+  await expect(pane.getByRole("region", { name: "Valde vedlegg" })).toContainText("klar til å sendast");
   await composer.fill(body);
   await composer.press("Control+Enter");
   const message = pane.locator("[data-message-id]").filter({ hasText: body });
@@ -168,6 +173,10 @@ test("Kretsrom shows saved choices first and keeps counts beside the message act
   await picker.getByRole("button", { name: "Skål" }).click();
   const badge = message.getByRole("button", { name: "🍻: 1 reaksjonar" });
   await expect(badge).toHaveAttribute("aria-pressed", "true");
+  const caption = message.locator("figcaption");
+  const touch = await page.evaluate(() => matchMedia("(pointer: coarse)").matches);
+  expect((await caption.boundingBox())!.height).toBeLessThanOrEqual(touch ? 32 : 24);
+  expect((await badge.locator(".sp-reaction-count").boundingBox())!.height).toBe(20);
   const [chip, action, reply] = await Promise.all([badge.boundingBox(), add.boundingBox(), message.getByRole("button", { name: "Svar i tråd", exact: true }).boundingBox()]);
   for (const box of [action!, reply!]) expect(Math.abs(chip!.y + chip!.height / 2 - box.y - box.height / 2)).toBeLessThan(5);
   await add.click();
