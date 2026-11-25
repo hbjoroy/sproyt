@@ -32,3 +32,4 @@ pub(crate) mod work_items;
 
 pub(crate) mod channel_governance;
 pub(crate) mod events;
+pub(crate) mod feedback;

@@ -166,6 +166,11 @@ pub(super) async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>
     let work_items =
         crate::work_items::WorkItems::from_env(config.database(), postgres_pool.as_ref()).await?;
     work_items.start_worker(chat.clone(), operations.subscribe_shutdown());
+    work_items.start_feedback_worker(
+        chat_agents.clone(),
+        chat.clone(),
+        operations.subscribe_shutdown(),
+    );
     let media_store =
         crate::media_store::MediaStore::from_env(config.database(), postgres_pool.as_ref()).await?;
     if let Some(store) = &media_store {
@@ -488,6 +493,19 @@ pub(super) fn build_router(state: AppState, operations: OperationalState) -> Rou
         .route(
             "/api/v1/work-item-tasks/{id}",
             get(crate::web::work_items::task),
+        )
+        .route(
+            "/api/v1/integrations/github/feedback",
+            post(crate::web::feedback::github_event)
+                .layer(axum::extract::DefaultBodyLimit::max(256 * 1024)),
+        )
+        .route(
+            "/api/v1/channels/{id}/messages/{message_id}/feedback-issue",
+            get(crate::web::feedback::get),
+        )
+        .route(
+            "/api/v1/channels/{id}/messages/{message_id}/feedback-issue/review",
+            post(crate::web::feedback::review),
         )
         .route(
             "/api/v1/channels/{id}/work-items/source/{message_id}",

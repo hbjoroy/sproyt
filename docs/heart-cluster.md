@@ -181,3 +181,24 @@ expired grants and terminal failures. To drain, turn off `newWorkEnabled` while
 keeping runtime v2, the credential file and workers available. Preserve the new
 schema and use a compatible runtime to reconcile accepted work. Database restore
 requires separate reconciliation of effects already accepted downstream.
+
+## Heart for «Tilbakemeldingar Sprøyt»
+
+`config.feedbackEnabled` aktiverer både kanalarbeidaren og synkroniseringa av
+`sproyt/feedback-issue/1.0.0`. Aktiver dette i éi installasjon når canary og
+produksjon les den same Sprøyt-databasen. Kontroller før aktivering kva
+`SPROYT_HEART_URL` løyser til frå denne installasjonen, kva Heart-database
+den tenesta bruker, og at v2 er aktivert der. Dei andre installasjonane skal ha
+`config.feedbackEnabled: false`.
+
+Sprøyt registrerer definisjonen via v2-API-et ved første start, med kjeldemeldinga
+som idempotensnøkkel. Produkteigaren lagrar ei vurdering med «Utført». Heart
+går så til `await-github`, ei oppgåve tildelt kanalagenten. Når eit GitHub-oppslag
+starta etter vurderinga stadfestar lukking, får Heart sluttårsaka. GitHub
+`completed` fører til «Løyst», og `not_planned` fører til «Avvist».
+
+Ved flytting av arbeidaren må mottakaren nå den same varige Heart-databasen,
+og den gamle arbeidaren må vere stoppa først. Dersom installasjonane skal ha
+kvar si Heart-database, stopp nytt inntak og la aktive instansar fullføre i
+den opphavlege installasjonen før du flyttar arbeidet. GitHub-kvitteringar,
+vurderingar og Heart-instans-ID-ar ligg i den delte Sprøyt-databasen.

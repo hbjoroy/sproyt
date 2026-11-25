@@ -1,0 +1,29 @@
+namespace: sproyt
+name: feedback-issue
+version: '1.0.0'
+runtime: v2
+description: Produkteigaren vurderer ei sak frå tilbakemeldingskanalen og følgjer ho til GitHub lukkar ho.
+nodes:
+  start:
+    type: start
+    next: review
+  review:
+    type: user-task
+    assignee_metadata_key: reviewer_id
+    next: await-github
+  await-github:
+    type: user-task
+    assignee_metadata_key: agent_id
+    next: closure
+  closure:
+    type: gate
+    conditions:
+      - when: return results["await-github"].value.outcome == "resolved"
+        next: resolved
+    default: rejected
+  resolved:
+    type: end
+    description: Løyst
+  rejected:
+    type: end
+    description: Avvist

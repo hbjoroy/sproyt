@@ -73,7 +73,7 @@ function keepPointerTarget(event: ReactPointerEvent<HTMLElement>): void {
 /** Presentation only: all counts, identities and mutations remain host-owned. */
 export function PreviewReactionActions({ message, open, primaryAction, overflowActions }: {
   message: ChatMessage; host: PreviewReactionHost; open: (message: ChatMessage, anchor: HTMLElement) => void;
-  primaryAction?: ReactNode; overflowActions?: (close: () => void) => ReactNode;
+  primaryAction?: ReactNode; overflowActions?: (close: () => void, open: boolean) => ReactNode;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const hasOverflow = Boolean(overflowActions);
@@ -88,7 +88,7 @@ export function PreviewReactionActions({ message, open, primaryAction, overflowA
         onPointerDown={keepPointerTarget} onClick={() => setMenuOpen(true)}><span className="kr-mobile-more-label">Fleire</span><span aria-hidden="true">⋯</span></Button>}
       <Dialog open={menuOpen && hasOverflow} title="Meldingsval" closeLabel="Lukk meldingsvala" onClose={() => setMenuOpen(false)}>
         <div className="sp-message-menu-dialog">
-        {overflowActions?.(() => setMenuOpen(false))}
+        {overflowActions?.(() => setMenuOpen(false), menuOpen)}
         </div>
       </Dialog>
     </div>

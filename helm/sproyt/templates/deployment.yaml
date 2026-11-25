@@ -65,6 +65,13 @@ spec:
                   name: {{ .Values.secret.channelTopicsExistingSecret }}
                   key: {{ .Values.secret.channelTopicsApiKeyKey }}
             {{- end }}
+            {{- if and .Values.config.feedbackEnabled .Values.github.feedbackWebhookSecret }}
+            - name: SPROYT_FEEDBACK_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.github.feedbackWebhookSecret }}
+                  key: webhook-secret
+            {{- end }}
             {{- if .Values.github.existingSecret }}
             - name: SPROYT_GITHUB_APP_ID
               valueFrom:

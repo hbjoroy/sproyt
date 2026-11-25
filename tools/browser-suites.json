@@ -33,6 +33,7 @@
     "ui-react-work-item-supplements.spec.ts",
     "ui-native-download-return.spec.ts",
     "ui-react-work-item-github.spec.ts",
+    "ui-react-feedback-issue.spec.ts",
     "ui-react-work-item-status.spec.ts",
     "ui-react-history.spec.ts",
     "ui-react-reading.spec.ts",

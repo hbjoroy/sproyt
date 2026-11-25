@@ -1,5 +1,6 @@
 import { HttpClient, HttpError } from "./api";
 import { isRecord } from "./types";
+import { decodeFeedbackIssue, feedbackIssuePath, type FeedbackIssue } from "./feedback-issue";
 
 export type WorkApplication = Readonly<{ id: string; key: string; name: string }>;
 export type WorkItemDraft = Readonly<{ source_body: string; title: string; suggested_by_model: boolean }>;
@@ -144,6 +145,41 @@ export class WorkItemApi {
       if (items.some(item => item.source_message_id !== messageId)) throw new Error("Svaret gjeld ei anna melding.");
       return items;
     });
+  }
+
+  async feedbackIssue(channelId: string, messageId: string, signal?: AbortSignal): Promise<FeedbackIssue | null> {
+    const owner = this.identity();
+    const issue = await this.http.json(feedbackIssuePath(channelId, messageId), value => value === null ? null : decodeFeedbackIssue(value),
+      { signal }, () => this.identity() === owner);
+    if (issue && ["review_submitted", "waiting_for_close", "resolved", "rejected"].includes(issue.stage)) {
+      this.clearAdmission(`sproyt-feedback-review:${owner}:${channelId}:${messageId}`);
+    }
+    return issue;
+  }
+
+  pendingFeedbackReview(channelId: string, messageId: string): string | null {
+    return this.pendingAdmission(`sproyt-feedback-review:${this.identity()}:${channelId}:${messageId}`)?.payload ?? null;
+  }
+
+  async reviewFeedback(channelId: string, messageId: string, issue: FeedbackIssue, assessment: string): Promise<FeedbackIssue> {
+    const owner = this.identity();
+    const key = `sproyt-feedback-review:${owner}:${channelId}:${messageId}`;
+    const text = assessment.trim();
+    if (!text) throw new Error("Skriv ei vurdering først.");
+    const admission = this.admitCommand(key, text, issue.issue_number);
+    if (admission.revision !== issue.issue_number) throw new Error("Meldinga har fått ei anna GitHub-sak.");
+    try {
+      const result = await this.http.json(feedbackIssuePath(channelId, messageId) + "/review", decodeFeedbackIssue, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ request_id: admission.id, assessment: text })
+      }, () => this.identity() === owner);
+      if (result.issue_url !== issue.issue_url) throw new Error("Svaret gjeld ei anna GitHub-sak.");
+      this.clearAdmission(key);
+      return result;
+    } catch (cause) {
+      if (cause instanceof HttpError && [400, 403, 404, 409, 422].includes(cause.status)) this.clearAdmission(key);
+      throw cause;
+    }
   }
 
   pendingSupplement(item: SourceWorkItem): string | null {

@@ -1116,6 +1116,18 @@ impl ChatEngine {
             .map_err(|_| ChatError::EngineStopped)
     }
 
+    pub(crate) async fn announce_persisted_reaction(
+        &self,
+        change: MessageReactionChange,
+    ) -> Result<(), ChatError> {
+        self.mailbox
+            .send(Command::ExternalReaction {
+                event: ChatEvent::MessageReactionChanged { change },
+            })
+            .await
+            .map_err(|_| ChatError::EngineStopped)
+    }
+
     async fn send_message_command(
         &self,
         channel_id: ChannelId,

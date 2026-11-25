@@ -17,6 +17,13 @@ use std::time::Duration;
 use tokio::sync::watch;
 use uuid::Uuid;
 
+#[path = "feedback/heart.rs"]
+mod feedback_heart;
+pub(crate) use feedback_heart::FeedbackReview;
+#[path = "feedback/channel.rs"]
+mod feedback_channel;
+#[path = "feedback/worker.rs"]
+mod feedback_worker;
 mod github_export;
 pub(crate) use github_export::{ExportCommand, ExportView};
 mod status_change;
@@ -235,6 +242,9 @@ impl WorkItems {
             return;
         }
         let service = self.clone();
+        // Canary and production can share chat data while using separate Heart
+        // databases. Only the enabled installation may claim feedback runs.
+        let feedback_enabled = std::env::var("SPROYT_FEEDBACK_ENABLED").as_deref() == Ok("true");
         tokio::spawn(async move {
             loop {
                 if *shutdown.borrow() {
@@ -244,6 +254,14 @@ impl WorkItems {
                     tracing::warn!(
                         error_kind = error.kind(),
                         "work item Heart synchronization deferred"
+                    );
+                }
+                if feedback_enabled
+                    && let Err(error) = service.sync_feedback_reviews(Utc::now().timestamp()).await
+                {
+                    tracing::warn!(
+                        error_kind = error.kind(),
+                        "feedback Heart synchronization deferred"
                     );
                 }
                 tokio::select! { _ = tokio::time::sleep(Duration::from_secs(5)) => {}, _ = shutdown.changed() => {} }

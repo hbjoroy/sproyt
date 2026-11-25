@@ -2,6 +2,7 @@
 //! separate from the temporary MCP credential flow in `agent`.
 use std::{sync::Arc, time::Duration};
 
+pub(crate) mod feedback;
 use chrono::{DateTime, Utc};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
@@ -2033,7 +2034,7 @@ fn strip_internal_tokens(body: &str) -> String {
 
 // The same scope check applies at admission, reading and publication. Felles
 // accepts only explicit operator grants on visible public channels.
-const CHAT_AGENT_SCOPE: &str = "(c.circle_id=a.circle_id or (c.circle_id is null and c.kind='public' and not c.hidden and exists(select 1 from channel_chat_agent_settings f where f.channel_id=c.id and f.agent_id=a.agent_id and f.enabled=true)))";
+const CHAT_AGENT_SCOPE: &str = "(not exists(select 1 from feedback_routes reserved where reserved.agent_id=a.agent_id) and (c.circle_id=a.circle_id or (c.circle_id is null and c.kind='public' and not c.hidden and exists(select 1 from channel_chat_agent_settings f where f.channel_id=c.id and f.agent_id=a.agent_id and f.enabled=true))))";
 
 pub(crate) async fn enqueue_postgres(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,

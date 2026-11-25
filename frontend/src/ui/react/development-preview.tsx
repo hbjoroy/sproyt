@@ -37,6 +37,8 @@ import { GettingStarted } from "./getting-started";
 import type { CircleChatAgentApi } from "../../chat-agents";
 import type { WorkApplication, WorkItemApi } from "../../work-items";
 import { WorkItemRegistration } from "./work-item-registration";
+import { FeedbackIssueDialog, FeedbackIssueMenuAction } from "./feedback-issue";
+import type { FeedbackIssue } from "../../feedback-issue";
 import { WorkItemTaskMessage } from "./work-item-task";
 import { WorkItemStatusMessage } from "./work-item-status";
 import { workItemStatusId, workItemTaskId } from "../../work-items";
@@ -488,6 +490,8 @@ function MessageActions({ host, message, threadAction, openThread, threadHasRepl
   const messageLink = viewHref({ kind: "conversation", channelId: message.channel_id, messageId: message.id,
     sequence: message.sequence, ...(message.parent_message_id ? { threadId: message.parent_message_id } : {}) }, window.location.href);
   const [issueOpen, setIssueOpen] = useState(false);
+  const [feedback, setFeedback] = useState<{ issue: FeedbackIssue; context: string } | null>(null);
+  const feedbackContext = `${accountEpoch}/${owner}/${message.channel_id}/${message.id}`;
   const [hasExistingItems, setHasExistingItems] = useState(false);
   const availabilityAnchor = useRef<HTMLDivElement>(null);
   const hasMutations = host.canEditMessage(message) || host.canDeleteMessage(message);
@@ -523,7 +527,7 @@ function MessageActions({ host, message, threadAction, openThread, threadHasRepl
   const hasWorkItemAction = canHaveWorkItems && (apps.length > 0 || hasExistingItems);
   return <div ref={availabilityAnchor} className="sp-message-action-host">
     <PreviewReactionActions message={message} host={host} open={openReaction} primaryAction={threadAction}
-      overflowActions={close => <>
+      overflowActions={(close, menuOpen) => <>
         {openThread && <Button variant="quiet" onClick={() => { close(); openThread(); }}>{threadHasReplies ? "Svar i tråd" : "Start tråd"}</Button>}
         <Button variant="quiet" onClick={() => {
           close();
@@ -534,6 +538,9 @@ function MessageActions({ host, message, threadAction, openThread, threadHasRepl
           close(); void saveLink();
         }}>Ta vare på</Button>}
         <PreviewMessageMutations message={message} host={host} />
+        {menuOpen && owner && <FeedbackIssueMenuAction key={feedbackContext}
+          api={host.workItems} channelId={message.channel_id} messageId={message.id}
+          onOpen={issue => { close(); setFeedback({ issue, context: feedbackContext }); }} />}
         {canHaveWorkItems
           && <WorkItemMenuAction host={host} message={message} hasApplications={apps.length > 0} hasExistingItems={hasExistingItems} onOpen={() => { close(); setIssueOpen(true); }} />}
       </>} />
@@ -544,6 +551,8 @@ function MessageActions({ host, message, threadAction, openThread, threadHasRepl
       <p>Merk og kopier lenkja. Ho opnar denne meldinga for dei som har tilgang til samtalen.</p>
     </Dialog>}
     {issueOpen && <WorkItemRegistration api={host.workItems} message={message} open onClose={() => setIssueOpen(false)} />}
+    {feedback?.context === feedbackContext && <FeedbackIssueDialog api={host.workItems} messageId={message.id}
+      channelId={message.channel_id} initialIssue={feedback.issue} onClose={() => setFeedback(null)} />}
   </div>;
 }
 
