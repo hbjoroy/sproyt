@@ -34,7 +34,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 12
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Start separate localhost recovery and passkey laboratory
         shell: pwsh
         run: ./native/probes/authentik/start-lab.ps1 -ArtifactsDirectory '${{ runner.temp }}/sproyt-passkey' -Recovery
@@ -58,21 +58,21 @@ jobs:
           ./native/probes/authentik/run-recovery-api.ps1 -RunDirectory $labs[0].FullName
       - name: Preserve only non-secret passkey configuration receipts
         if: success()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: native-passkey-configuration
           retention-days: 7
           path: ${{ runner.temp }}/sproyt-passkey/runs/**/passkey-checks/**/evidence/receipt.json
       - name: Preserve only non-secret recovery receipts
         if: success()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: native-recovery-link-contract
           retention-days: 7
           path: ${{ runner.temp }}/sproyt-passkey/runs/**/recovery-checks/**/evidence/receipt.json
       - name: Preserve only non-secret public recovery API receipts
         if: success()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: native-recovery-api-contract
           retention-days: 7
@@ -91,8 +91,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-dotnet@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.301'
       - name: Install pinned Rust
@@ -115,7 +115,7 @@ jobs:
           ./native/probes/authentik/run-lab.ps1 -RunDirectory $labs[0].FullName -HttpOnly -Revocation
       - name: Preserve only non-secret Authentik receipts
         if: success()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: native-authentik-contract
           retention-days: 7
@@ -138,8 +138,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-dotnet@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.301'
       - name: Install pinned Rust
@@ -150,7 +150,7 @@ jobs:
         run: ./native/probes/run-identity-probe.ps1 -ArtifactsDirectory '${{ runner.temp }}/sproyt-native-identity'
       - name: Preserve non-secret identity receipts
         if: success()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: native-identity-${{ matrix.os }}
           retention-days: 7
@@ -160,8 +160,8 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-dotnet@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.301'
       - name: Install pinned Rust
@@ -172,7 +172,7 @@ jobs:
         run: ./native/probes/run-windows-reactor.ps1 -Architecture x64 -ArtifactsDirectory '${{ runner.temp }}/sproyt-reactor' -UiSmoke
       - name: Preserve Windows evidence and bounded failure diagnostics
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: native-probe-windows-reactor
           retention-days: 7
@@ -201,8 +201,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-dotnet@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.301'
       - name: Install pinned Rust
@@ -213,7 +213,7 @@ jobs:
         run: ./native/probes/run-probe.ps1 -ArtifactsDirectory '${{ runner.temp }}/sproyt-native-probe'
       - name: Preserve non-secret fixture receipts
         if: success()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: native-probe-${{ matrix.os }}
           path: ${{ runner.temp }}/sproyt-native-probe/fixtures/**/receipt.json
@@ -222,8 +222,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-java@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '21'
@@ -237,7 +237,7 @@ jobs:
         run: ./native/probes/run-language-probe.ps1 -Language kotlin -ArtifactsDirectory '${{ runner.temp }}/sproyt-native-language-probe'
       - name: Preserve Kotlin fixture receipts
         if: success()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: native-probe-kotlin
           path: ${{ runner.temp }}/sproyt-native-language-probe/kotlin/fixtures/**/receipt.json
@@ -246,7 +246,7 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Record Apple toolchain
         run: swift --version
       - name: Install pinned Rust
@@ -257,7 +257,7 @@ jobs:
         run: ./native/probes/run-language-probe.ps1 -Language swift -ArtifactsDirectory '${{ runner.temp }}/sproyt-native-language-probe'
       - name: Preserve Swift fixture receipts
         if: success()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: native-probe-swift
           path: ${{ runner.temp }}/sproyt-native-language-probe/swift/fixtures/**/receipt.json
