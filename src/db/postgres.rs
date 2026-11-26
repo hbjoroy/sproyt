@@ -5427,3 +5427,7 @@ mod tests {
         assert_eq!(sequences, (2_u64..=33).collect::<Vec<_>>());
     }
 }
+
+#[cfg(test)]
+#[path = "postgres_migration_tests.rs"]
+mod migration_tests;
