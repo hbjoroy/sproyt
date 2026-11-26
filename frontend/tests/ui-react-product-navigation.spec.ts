@@ -204,6 +204,54 @@ for (const width of [1280, 320]) test(`direct directory has its own URL, new-mes
   await page.screenshot({ path: testInfo.outputPath(`product-navigation-${width}.png`) });
 });
 
+for (const width of [320, 740, 1280]) test(`Kretsrom keeps directory tabs and search visible at ${width}px`, async ({ page }) => {
+  await page.setViewportSize({ width, height: 844 });
+  await page.addInitScript(() => localStorage.setItem("sproyt.design.kretsrom.v1", "on"));
+  const { app } = await fixture(page, `channel=${directId}`);
+  const nav = app.locator(".kr-directory");
+  const circles = nav.getByRole("tab", { name: /^Kretsar/ });
+  const direct = nav.getByRole("tab", { name: /^Direktemeldingar/ });
+  const search = nav.getByRole("button", { name: "Søk i samtalar" });
+  async function expectSwitcher() {
+    for (const control of [circles, direct, search]) await expect(control).toBeInViewport({ ratio: 1 });
+    expect(await nav.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+  }
+  await expect(direct).toHaveAttribute("aria-selected", "true");
+  await expectSwitcher();
+  await page.reload();
+  await expect(direct).toHaveAttribute("aria-selected", "true");
+  await expectSwitcher();
+  await circles.click();
+  const more = nav.getByRole("button", { name: "Fleire samtaleval" });
+  await more.click();
+  await expectSwitcher();
+  await more.click();
+  await expectSwitcher();
+  await circles.press("ArrowRight");
+  await expect(direct).toBeFocused();
+  await search.click();
+  const input = nav.getByRole("searchbox", { name: "Finn samtale" });
+  await expect(input).toBeFocused();
+  await input.fill("Ada");
+  await expect(nav.getByRole("button", { name: "Ada", exact: true })).toBeVisible();
+  await expect(nav.getByRole("button", { name: "Bert", exact: true })).toBeHidden();
+  await search.click();
+  await expect(nav.getByRole("button", { name: "Bert", exact: true })).toBeVisible();
+  await nav.getByRole("button", { name: "Ada", exact: true }).click();
+  await expectSwitcher();
+  await search.click();
+  await expect(input).toBeFocused();
+  await input.fill("Bert");
+  await nav.getByRole("button", { name: "Bert", exact: true }).click();
+  await expect(input).toBeHidden();
+  await expectSwitcher();
+  const label = direct.locator("span").first();
+  await expect(label).toHaveCSS("text-overflow", "ellipsis");
+  if (width === 740 || width === 1280) {
+    expect(await label.evaluate(el => el.scrollWidth > el.clientWidth)).toBe(width === 740);
+  }
+});
+
 test("a direct-channel deep link selects the direct tab and retains both direct conversations", async ({ page }) => {
   const { app } = await fixture(page, `channel=${directId}`);
   const nav = await navigation(app);

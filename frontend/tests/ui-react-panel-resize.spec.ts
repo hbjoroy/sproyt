@@ -226,7 +226,6 @@ test("Kretsrom keeps the remembered sidebar width, thread control and channel to
   await expect(view.app.locator(".kr-directory")).toHaveCSS("width", "404px");
   await page.reload();
   await expect(view.sidebar).toHaveAttribute("aria-valuenow", "404");
-  await view.app.getByRole("button", { name: "Samtaleval, søk og direktemeldingar" }).click();
   await expect(view.app.getByRole("tab", { name: "Direktemeldingar" })).toBeVisible();
   await openThread(page, view);
   await expect(view.threadDivider).toBeVisible();

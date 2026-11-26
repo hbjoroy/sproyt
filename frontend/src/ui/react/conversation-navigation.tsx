@@ -156,6 +156,10 @@ function AccountNavigation(props: NavigationProps) {
 
   function select(group: ConversationGroup, channelId: string) {
     if (group.id.startsWith("circle:")) update(recordCircleSelection(preferences, group.id));
+    if (kretsrom && searchOpen) {
+      setSearchOpen(false);
+      props.onQueryChange("");
+    }
     props.onSelect(channelId);
   }
 
@@ -243,15 +247,29 @@ function AccountNavigation(props: NavigationProps) {
     catch { setMarkError(true); }
     finally { setMarking(false); }
   }
-  const searchField = <TextField label="Finn samtale" type="search" value={props.query}
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchInput = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (searchOpen) searchInput.current?.focus();
+  }, [searchOpen]);
+  const searchField = <TextField ref={searchInput} label="Finn samtale" type="search" value={props.query}
       onChange={event => props.onQueryChange(event.currentTarget.value)} />;
+  const tabs = <div className="sp-product-nav-tabs" role="tablist" aria-label="Samtalar">
+    {(["circles", "direct"] as const).map(value => <button key={value} type="button" role="tab"
+      id={`${id}-${value}-tab`} data-scope={value} aria-selected={scope === value} aria-controls={`${id}-${value}-panel`}
+      tabIndex={scope === value ? 0 : -1} onKeyDown={tabKey} onClick={() => { setScope(value); props.onDirectoryScopeChange?.(value); }}>
+      <span>{value === "circles" ? "Kretsar" : "Direktemeldingar"}</span>
+      <UnreadBadge count={unreadCount(value === "circles" ? [...sharedGroups, ...circles] : directGroups)} />
+      {searching && <span className="sp-product-nav-match-count" aria-label="søkjetreff">
+        {(value === "circles" ? [...sharedGroups, ...circles] : directGroups).reduce((count, group) => count + group.conversations.length, 0)}
+      </span>}
+    </button>)}
+  </div>;
   const directory = <div className="sp-product-navigation" data-directory-options={optionsOpen}>
     {kretsrom && <div className="kr-directory-heading">
       <span>{scope === "circles" ? "Vennekretsar" : "Direktemeldingar"}</span>
-      <button type="button" aria-label="Samtaleval, søk og direktemeldingar" aria-expanded={optionsOpen}
-        onClick={() => setOptionsOpen(value => !value)}>•••
-        {!optionsOpen && scope === "circles" && <UnreadBadge count={unreadCount(directGroups)} />}
-      </button>
+      <button type="button" aria-label="Fleire samtaleval" aria-expanded={optionsOpen}
+        onClick={() => setOptionsOpen(value => !value)}>•••</button>
     </div>}
     {props.ownerId && props.markAllRead && props.directoryReady && (props.hasUnread || marking) &&
       <div className="sp-mark-all-read">
@@ -261,18 +279,8 @@ function AccountNavigation(props: NavigationProps) {
         </Button>
         {markError && <Status tone="error">Klarte ikkje å markere som lese. Prøv igjen.</Status>}
       </div>}
-    {kretsrom ? <details className="kr-search"><summary>Finn samtale</summary>{searchField}</details> : searchField}
-    <div className="sp-product-nav-tabs" role="tablist" aria-label="Samtalar">
-      {(["circles", "direct"] as const).map(value => <button key={value} type="button" role="tab"
-        id={`${id}-${value}-tab`} data-scope={value} aria-selected={scope === value} aria-controls={`${id}-${value}-panel`}
-        tabIndex={scope === value ? 0 : -1} onKeyDown={tabKey} onClick={() => { setScope(value); props.onDirectoryScopeChange?.(value); }}>
-        <span>{value === "circles" ? "Kretsar" : "Direktemeldingar"}</span>
-        <UnreadBadge count={unreadCount(value === "circles" ? [...sharedGroups, ...circles] : directGroups)} />
-        {searching && <span className="sp-product-nav-match-count" aria-label="søkjetreff">
-          {(value === "circles" ? [...sharedGroups, ...circles] : directGroups).reduce((count, group) => count + group.conversations.length, 0)}
-        </span>}
-      </button>)}
-    </div>
+    {!kretsrom && searchField}
+    {!kretsrom && tabs}
     <div role="tabpanel" id={`${id}-circles-panel`} aria-labelledby={`${id}-circles-tab`} hidden={scope !== "circles"}>
       {saved.ownerId === props.ownerId && saved.error && <Status tone="error">{saved.error} <button type="button" onClick={() => props.favorites?.retry(props.ownerId)}>Prøv favorittane på nytt</button></Status>}
       {legacyPins.length > 0 && <details className="sp-product-nav-legacy-pins"><summary>Tidlegare lokale favorittar</summary>
@@ -313,6 +321,22 @@ function AccountNavigation(props: NavigationProps) {
     {props.footer && <div className="sp-product-nav-footer">{props.footer}</div>}
   </div>;
   return <div ref={navigation} className="sp-product-nav-layout">
+    {kretsrom && <div className="kr-directory-controls">
+      <div className="kr-directory-switcher">
+        {tabs}
+        <button className="kr-directory-search" type="button" aria-label="Søk i samtalar" title="Søk i samtalar"
+          aria-expanded={searchOpen} aria-controls={`${id}-search`} onClick={() => {
+            if (searchOpen) props.onQueryChange("");
+            else props.onDirectoryScopeChange?.(scope);
+            setSearchOpen(!searchOpen);
+          }}>
+          <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <circle cx="10" cy="10" r="6" /><path d="m15 15 6 6" />
+          </svg>
+        </button>
+      </div>
+      <div id={`${id}-search`} hidden={!searchOpen}>{searchField}</div>
+    </div>}
     {directory}
     {props.personalShortcut && <div className="sp-product-nav-shortcut">{props.personalShortcut}</div>}
   </div>;

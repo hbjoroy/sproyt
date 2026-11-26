@@ -52,8 +52,6 @@
 
 #sproyt-react-preview .kr-compose > .sp-textarea { order: 0; }
 #sproyt-react-preview .kr-byline :is(.sp-time,.sp-message-early-adopter,.sp-message-status-edit) { min-height: 24px; min-width: 24px; }
-.kr-directory .kr-search > summary { cursor: pointer; font-size: 13px; color: var(--sp-muted); min-height: 44px; align-content: center; }
-.kr-directory .sp-product-nav-tabs { order: -1; }
 .kr-room-options .kr-room-menu { max-height: min(70dvh,32rem); overflow: auto; }
 
 /* Directory hierarchy and excerpts follow the archived Hyttegutta scene. */
@@ -62,8 +60,22 @@
   padding-inline-start: 8px; color: var(--sp-muted); font-size: 14px;
 }
 .kr-directory-heading button { min-width: 44px; min-height: 44px; border: 0; background: transparent; color: inherit; cursor: pointer; }
-.kr-directory .sp-product-nav-tabs { order: 0; }
-.kr-directory [data-directory-options=false] :is(.kr-search,.sp-product-nav-tabs,.sp-product-nav-pin,.sp-product-nav-group-actions,.sp-conversation-actions,.sp-product-nav-guide,.sp-product-nav-footer) { display: none; }
+/* Keep the scope switcher outside the scrolling conversation list. */
+.kr-directory .sp-product-nav-layout { grid-template-rows: auto minmax(0, 1fr) auto; }
+.kr-directory-controls { min-width: 0; padding-inline: 8px; }
+.kr-directory-switcher { display: grid; grid-template-columns: minmax(0, 1fr) 44px; border-bottom: 1px solid var(--sp-line); }
+.kr-directory-switcher .sp-product-nav-tabs { grid-template-columns: max-content minmax(0, 1fr); border: 0; }
+.kr-directory-switcher .sp-product-nav-tabs > button { flex-wrap: nowrap; padding-inline: 6px; }
+.kr-directory-switcher [role=tab] > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kr-directory-search { display: grid; place-items: center; min-height: 44px; border: 0; background: transparent; color: var(--sp-text); cursor: pointer; }
+.kr-directory-search:is(:hover,[aria-expanded=true]) { background: var(--sp-wash); }
+@container sp-app (max-width: 600px) {
+  .kr-shell[data-view=detail] .kr-layout { grid-template-rows: auto minmax(0, 1fr); }
+  .kr-shell[data-view=detail] .kr-directory { display: block; }
+  .kr-shell[data-view=detail] .sp-product-nav-layout { grid-template-rows: auto; }
+  .kr-shell[data-view=detail] .kr-directory :is(.sp-product-navigation, .sp-product-nav-shortcut) { display: none; }
+}
+.kr-directory [data-directory-options=false] :is(.sp-product-nav-pin,.sp-product-nav-group-actions,.sp-conversation-actions,.sp-product-nav-guide,.sp-product-nav-footer) { display: none; }
 .kr-directory .sp-product-navigation { gap: 0; padding: 6px 8px 12px; }
 .kr-directory .sp-product-nav-heading .sp-product-nav-disclosure { padding: 4px 6px; gap: 5px; font: 600 15px "Segoe UI",sans-serif; }
 .kr-directory .sp-conversations { gap: 0; }
