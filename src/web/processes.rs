@@ -595,7 +595,7 @@ pub(crate) async fn channel_process_detail(
     if !process.split_once(':').is_some_and(|(kind, id)| {
         matches!(
             kind,
-            "process" | "pilot" | "work_review" | "work_export" | "work_status"
+            "process" | "pilot" | "work_review" | "work_export" | "work_status" | "feedback"
         ) && uuid::Uuid::parse_str(id).is_ok()
     }) {
         return Err(StatusCode::BAD_REQUEST.into_response());

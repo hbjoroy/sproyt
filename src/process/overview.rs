@@ -128,7 +128,12 @@ impl CircleProcessQuery {
                 && !cursor.key.split_once(':').is_some_and(|(kind, id)| {
                     matches!(
                         kind,
-                        "process" | "pilot" | "work_review" | "work_export" | "work_status"
+                        "process"
+                            | "pilot"
+                            | "work_review"
+                            | "work_export"
+                            | "work_status"
+                            | "feedback"
                     ) && uuid::Uuid::parse_str(id).is_ok()
                 }))
         {
@@ -176,6 +181,21 @@ fn epoch(value: &str, pg: bool) -> String {
     }
 }
 
+fn eligible_channels(scope: &ProcessScope) -> String {
+    let scope_filter = match scope {
+        ProcessScope::ModeratedCircle(_) => "cast(c.circle_id as text)=?2 and cm.role in ('owner','moderator')",
+        ProcessScope::Channel { .. } => "(cm.user_id is not null and c.circle_id=(select circle_id from channels where cast(id as text)=?2))
+            or (cast(c.id as text)=?2 and c.circle_id is null and c.kind='public' and not c.hidden)",
+    };
+    format!(
+        "select c.id,c.name from channels c
+        join channel_memberships m on m.channel_id=c.id and cast(m.user_id as text)=?1
+        join users u on u.id=m.user_id and u.kind='human'
+        left join circle_memberships cm on cm.circle_id=c.circle_id and cm.user_id=m.user_id
+        where ({scope_filter})"
+    )
+}
+
 fn overview_sql(pg: bool, scope: &ProcessScope) -> String {
     let inspected_status = if pg {
         "payload->>'status'"
@@ -189,31 +209,19 @@ fn overview_sql(pg: bool, scope: &ProcessScope) -> String {
     } else {
         "cast(w.created_at as bigint)".into()
     };
-    let (circle_filter, role_filter, result_filter) = match scope {
-        ProcessScope::ModeratedCircle(_) => (
-            "cast(c.circle_id as text)=?2",
-            "and cm.role in ('owner','moderator')",
-            "",
-        ),
-        ProcessScope::Channel { .. } => (
-            "c.circle_id=(select circle_id from channels where cast(id as text)=?2)",
-            "",
-            "and channel_id=?2",
-        ),
+    let eligible = eligible_channels(scope);
+    let result_filter = match scope {
+        ProcessScope::ModeratedCircle(_) => "",
+        ProcessScope::Channel { .. } => "and channel_id=?2",
     };
+    let feedback_time = epoch("m.created_at", pg);
     // Eligibility belongs inside the query, including private/public membership.
     // Every work source additionally requires all related source/task channels,
     // so even a task's existence cannot disclose a hidden conversation.
     sql(
         &format!(
             r#"
-with eligible as (
- select c.id,c.name from channels c
- join channel_memberships m on m.channel_id=c.id and cast(m.user_id as text)=?1
- join circle_memberships cm on cm.circle_id=c.circle_id and cm.user_id=m.user_id {role_filter}
- join users u on u.id=m.user_id and u.kind='human'
- where {circle_filter}
-), visible_work as (
+with eligible as ({eligible}), visible_work as (
  select w.* from work_items w
  join eligible source on source.id=w.source_channel_id
  join eligible task on task.id=w.task_channel_id
@@ -239,8 +247,16 @@ with eligible as (
  union all
  select 'work_status:'||cast(x.id as text),'work_status',cast(x.id as text),cast(x.channel_id as text),e.name,'Statusendring: '||w.title,x.status,'work-item-status-change','v2','sproyt','1.0.0',cast(x.heart_instance_id as text),null,x.created_at
  from work_item_status_changes x join visible_work w on w.id=x.work_item_id join eligible e on e.id=x.channel_id
+ union all
+ select 'feedback:'||cast(h.source_message_id as text),'feedback',cast(h.source_message_id as text),
+ cast(j.channel_id as text),e.name,'GitHub #'||cast(j.issue_number as text)||' · '||j.published_title,
+ case h.stage when 'review' then 'reviewing' when 'review_submitted' then 'reviewing' when 'waiting_for_close' then 'waiting' else h.stage end,
+ 'feedback-issue','v2','sproyt','1.0.0',cast(h.instance_id as text),null,{feedback_time}
+ from feedback_heart h join feedback_jobs j on j.source_message_id=h.source_message_id
+ join eligible e on e.id=j.channel_id join messages m on m.id=j.source_message_id and m.channel_id=e.id and m.deleted_at is null
+ where j.publication_kind='create' and j.status in ('published','done')
 )
-select * from items where (?3=1 or lower(status) not in ('completed','cancelled','canceled','terminated'))
+select * from items where (?3=1 or (lower(status) not in ('completed','cancelled','canceled','terminated') and not (kind='feedback' and status in ('resolved','rejected','failed'))))
  and (created_at>?4 or (created_at=?4 and key>?5))
 {result_filter} and (?7='' or key=?7)
 order by created_at,key limit ?6
@@ -252,6 +268,11 @@ order by created_at,key limit ?6
 
 fn step_sql(kind: &str, pg: bool) -> String {
     let template = match kind {
+        "feedback" => "select case stage when 'starting' then 'start' when 'review_submitted' then 'review'
+            when 'waiting_for_close' then 'await-github' else stage end as name,
+            case when stage in ('resolved','rejected','review_submitted') then 'completed'
+                 when stage='failed' then 'failed' else 'waiting' end as status,
+            cast(null as text) as occurred_at,cast(null as text) as message_id from feedback_heart where cast(source_message_id as text)=?1",
         "process" => {
             return sql(
                 &format!(
@@ -335,6 +356,10 @@ fn step_name(value: &str) -> String {
         "technical-review" => "Teknisk vurdering",
         "final-confirmation" => "Endeleg stadfesting",
         "review" => "Vurdering",
+        "await-github" => "Ventar på lukking i GitHub",
+        "closure" => "Lukkegrunn frå GitHub",
+        "resolved" => "Løyst",
+        "rejected" => "Avvist",
         "request-information" | "provide-information" => "Innhenting av informasjon",
         "github-export" => "Eksport til GitHub",
         "status-change" => "Statusendring",
@@ -360,9 +385,10 @@ macro_rules! implementation {
             }
             let actor=query.actor.to_string();
             let circle=query.scope.id();
+            let channel_authorization = format!("select 1 from ({}) eligible where cast(id as text)=?2", eligible_channels(&query.scope));
             let (authorization, key_filter) = match &query.scope {
                 ProcessScope::ModeratedCircle(_) => ("select 1 from circle_memberships cm join users u on u.id=cm.user_id and u.kind='human' where cast(cm.user_id as text)=?1 and cast(cm.circle_id as text)=?2 and cm.role in ('owner','moderator')", ""),
-                ProcessScope::Channel {process,..} => ("select 1 from channel_memberships m join channels c on c.id=m.channel_id join circle_memberships cm on cm.circle_id=c.circle_id and cm.user_id=m.user_id join users u on u.id=m.user_id and u.kind='human' where cast(m.user_id as text)=?1 and cast(m.channel_id as text)=?2",process.as_deref().unwrap_or("")),
+                ProcessScope::Channel {process,..} => (&channel_authorization[..],process.as_deref().unwrap_or("")),
             };
             let allowed: Option<i32> = sqlx::query_scalar(&sql(authorization,$pg))
                 .bind(&actor).bind(&circle).fetch_optional(&mut *transaction).await.map_err(storage)?;

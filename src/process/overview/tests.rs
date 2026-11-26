@@ -128,6 +128,32 @@ insert into process_pilot_tasks(id,run_id,message_id,node_id,status) values('{ch
             let cursor=$list(&pool,wrong.clone()).await.unwrap().next_cursor.unwrap();
             wrong.after=Some(cursor);wrong.scope=ProcessScope::ModeratedCircle(CircleId::from_uuid(other));
             assert!(wrong.validate().is_err());wrong=query.clone();wrong.limit=51;assert!(wrong.validate().is_err());
+            let felles = Uuid::now_v7();
+            let source = Uuid::now_v7();
+            sqlx::raw_sql(&format!(r#"
+                insert into channels(id,slug,name,kind,created_by) values('{felles}','feedback-{felles}','Felles','public','{owner}');
+                insert into channel_memberships(channel_id,user_id,role) values('{felles}','{member}','member');
+                insert into messages(id,channel_id,sender_id,sender_display_name,sequence,body) values('{source}','{felles}','{member}','Member',1,'Feedback');
+                insert into feedback_jobs(source_message_id,channel_id,source_sequence,source_body,agent_id,reviewer_id,application_id,
+                    binding_revision,repository_id,installation_id,repository_name,bot_login,status,publication_kind,
+                    published_title,issue_number,issue_id,issue_url) values('{source}','{felles}',1,'Feedback','{agent}','{member}','{application}',
+                    1,1,1,'owner/repo','bot','done','create','Test case',42,42,'https://github.com/owner/repo/issues/42');
+                insert into feedback_heart(source_message_id,stage) values('{source}','review');
+            "#)).execute(&pool).await.unwrap();
+            let mut feedback = CircleProcessQuery { scope: ProcessScope::Channel {channel:felles,process:None},
+                actor:UserId::from_uuid(member),all:false,limit:20,after:None };
+            let page=$list(&pool,feedback.clone()).await.unwrap();
+            assert_eq!(page.processes.len(),1);
+            assert_eq!(page.processes[0].status,"reviewing");
+            sqlx::raw_sql(&format!("update feedback_heart set stage='resolved' where source_message_id='{source}'")).execute(&pool).await.unwrap();
+            assert!($list(&pool,feedback.clone()).await.unwrap().processes.is_empty());
+            feedback.all=true;
+            feedback.scope=ProcessScope::Channel {channel:felles,process:Some(format!("feedback:{source}"))};
+            let page=$list(&pool,feedback.clone()).await.unwrap();
+            assert_eq!(page.processes[0].steps[0].node_id.as_deref(),Some("resolved"));
+            feedback.actor=UserId::from_uuid(owner);
+            assert!(matches!($list(&pool,feedback).await,Err(RepositoryError::PermissionDenied)));
+
             let _=foreign_task;
             pool.close().await;
         }

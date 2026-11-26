@@ -255,7 +255,9 @@ impl CircleProcess {
             self.history = transitions;
             self.history_truncated = events.len() > super::STEP_LIMIT;
         }
-        self.status = status.into();
+        if self.kind != "feedback" {
+            self.status = status.into();
+        }
         self.active_node_ids = Some(active.into_iter().map(str::to_owned).collect());
         self.definition_version = Some(version);
         self.definition_steps = Some(steps);
