@@ -195,12 +195,20 @@ async fn feedback_contract(f: Fixture) {
     let task = Uuid::now_v7();
     execute(store,"insert into feedback_intakes(source_message_id,stage,task_id) values(?uuid,'clarify',?uuid)", &[old,task]).await;
     let viewer = UserId::from_uuid(f.owner); // A full member of the channel, distinct from its product owner.
+    execute(
+        store,
+        "update messages set body='Revidert tilbakemelding' where id=?uuid",
+        &[old],
+    )
+    .await;
     let member_view = f
         .service
         .feedback_intake(viewer.clone(), f.channel, old)
         .await
         .unwrap()
         .unwrap();
+    assert_eq!(member_view.source_body, "Revidert tilbakemelding");
+    assert!(member_view.dismiss_only);
     assert!(!member_view.can_clarify);
     assert!(member_view.clarification_task_id.is_none());
     let reviewer_view = f

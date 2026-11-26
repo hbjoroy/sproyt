@@ -47,7 +47,7 @@ impl WorkItems {
         channel: Uuid,
         message: Uuid,
     ) -> Result<Option<FeedbackIntakeView>> {
-        let query=format!("select coalesce(i.stage,'starting'),j.source_body,cast(i.instance_id as text),
+        let query=format!("select coalesce(i.stage,'starting'),original.body,cast(i.instance_id as text),
             cast(i.task_id as text),i.reason,i.candidates,{}, receipt.task_id is not null,original.body<>j.source_body
             from feedback_jobs j {SOURCE}
             left join feedback_intakes i on i.source_message_id=j.source_message_id
