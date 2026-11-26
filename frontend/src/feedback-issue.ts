@@ -37,3 +37,22 @@ export function decodeFeedbackIssue(value: unknown): FeedbackIssue {
 export function feedbackIssuePath(channelId: string, messageId: string): string {
   return `/api/v1/channels/${encodeURIComponent(channelId)}/messages/${encodeURIComponent(messageId)}/feedback-issue`;
 }
+
+export const activationLabels = {
+  available: "Aktiver tilbakemeldinga",
+  pending: "Meldinga er i kø for vurdering",
+  ready: "Meldinga er vurdert",
+  sending: "Sender til GitHub",
+  uncertain: "Kontrollerer publiseringa i GitHub",
+  published: "Publisert i GitHub",
+  done: "Meldinga er behandla",
+  ignored: "Vurdert utan å opprette sak",
+  needs_review: "Treng manuell vurdering",
+} as const;
+
+export type FeedbackActivation = keyof typeof activationLabels;
+export function decodeFeedbackActivation(value: unknown): FeedbackActivation | null {
+  if (value === null) return null;
+  if (typeof value === "string" && Object.hasOwn(activationLabels, value)) return value as FeedbackActivation;
+  throw new Error("Kunne ikkje lese status for tilbakemeldinga.");
+}

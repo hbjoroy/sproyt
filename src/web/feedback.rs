@@ -33,6 +33,48 @@ pub(crate) async fn get(
     }
 }
 
+pub(crate) async fn activation(
+    State(state): State<AppState>,
+    Path((channel, message)): Path<(Uuid, Uuid)>,
+    Query(query): Query<WsQuery>,
+    method: axum::http::Method,
+    headers: HeaderMap,
+) -> Response {
+    let actor = match crate::web::personal_space::authenticated_user(&state, query, &headers).await
+    {
+        Ok(user) => user.id,
+        Err(response) => return response,
+    };
+    let activate = method == axum::http::Method::POST;
+    // An origin-bound JSON request is required for mutations, just as for review.
+    if activate
+        && headers
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.split(';').next())
+            .map(str::trim)
+            != Some("application/json")
+    {
+        return StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response();
+    }
+    let enabled = std::env::var("SPROYT_FEEDBACK_ENABLED").as_deref() == Ok("true");
+    let result = match state.work_items {
+        Some(service) if enabled => {
+            service
+                .feedback_activation(&actor, channel, message, activate)
+                .await
+        }
+        _ => Ok(None),
+    };
+    match result {
+        Ok(None) if activate => StatusCode::FORBIDDEN.into_response(),
+        Ok(status) => {
+            ([(header::CACHE_CONTROL, "private, no-store")], Json(status)).into_response()
+        }
+        Err(error) => repository_response(error),
+    }
+}
+
 pub(crate) async fn review(
     State(state): State<AppState>,
     Path((channel, message)): Path<(Uuid, Uuid)>,

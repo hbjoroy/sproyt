@@ -224,6 +224,33 @@ async fn sqlite_feedback_worker_qualifies_links_reconciles_and_observes_closure(
         assert_eq!(state.creations, 1);
     }
     let extra = h.source(EXTRA).await;
+    // Select an old message while keeping the automatic channel fence in place.
+    sqlx::query("update feedback_routes set after_sequence=(select sequence from messages where id=?) where channel_id=?")
+        .bind(extra.to_string()).bind(h.f.channel.to_string()).execute(&h.pool).await.unwrap();
+    let receipt =
+        h.f.service
+            .feedback_activation(&UserId::from_uuid(h.f.reviewer), h.f.channel, extra, true)
+            .await
+            .unwrap();
+    assert_eq!(receipt.as_deref(), Some("pending"));
+    // A selected historical message waits for a newer decision already in flight.
+    let newer = h.source("Ei ny melding i køen").await;
+    h.f.service.admit_feedback().await.unwrap();
+    sqlx::query("update feedback_jobs set lease_token=?,available_at=? where source_message_id=?")
+        .bind(Uuid::now_v7().to_string())
+        .bind(Utc::now().timestamp() + 600)
+        .bind(newer.to_string())
+        .execute(&h.pool)
+        .await
+        .unwrap();
+    h.tick(extra, "pending").await;
+    sqlx::query(
+        "update feedback_jobs set status='ignored',lease_token=null where source_message_id=?",
+    )
+    .bind(newer.to_string())
+    .execute(&h.pool)
+    .await
+    .unwrap();
     h.tick(extra, "uncertain").await;
     h.tick(extra, "published").await;
     h.tick(extra, "done").await;

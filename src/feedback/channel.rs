@@ -36,14 +36,62 @@ pub(super) const PINNED_JOB: &str = "
     and j.reviewer_id=r.reviewer_id and j.repository_id=b.repository_id and j.binding_revision=b.revision
     and j.installation_id=b.installation_id and j.repository_name=b.repository_name and j.bot_login=b.bot_login";
 
-impl WorkItems {
-    pub(super) async fn admit_feedback(&self) -> Result<()> {
-        let query = format!("
-            insert into feedback_jobs(source_message_id,channel_id,source_sequence,source_body,agent_id,
+const ADMIT: &str = "insert into feedback_jobs(source_message_id,channel_id,source_sequence,source_body,agent_id,
                 reviewer_id,application_id,binding_revision,repository_id,installation_id,repository_name,bot_login)
             select m.id,c.id,m.sequence,m.body,r.agent_id,r.reviewer_id,r.application_id,
-                b.revision,b.repository_id,b.installation_id,b.repository_name,b.bot_login
-            from {SOURCE_AUTHORITY}
+                b.revision,b.repository_id,b.installation_id,b.repository_name,b.bot_login";
+
+const ACTIVATE_SOURCE: &str =
+    "m.id=?uuid and c.id=?uuid and r.reviewer_id=?uuid and m.sequence<=r.after_sequence";
+
+impl WorkItems {
+    pub(crate) async fn feedback_activation(
+        &self,
+        actor: &UserId,
+        channel: Uuid,
+        message: Uuid,
+        activate: bool,
+    ) -> Result<Option<String>> {
+        // Both the offer and the admission use the route's current product-owner and channel grants.
+        let offer = format!(
+            "select coalesce(j.status,'available') from {SOURCE_AUTHORITY}
+            left join feedback_jobs j on j.source_message_id=m.id where {ACTIVATE_SOURCE}"
+        );
+        let enqueue = format!(
+            "{ADMIT} from {SOURCE_AUTHORITY} where {ACTIVATE_SOURCE}
+            on conflict(source_message_id) do nothing"
+        );
+        macro_rules! activation {
+            ($pool:expr,$pg:expr) => {{
+                let mut tx = $pool.begin().await.map_err(storage)?;
+                if activate {
+                    sqlx::query(&sql(&enqueue, $pg))
+                        .bind(message.to_string())
+                        .bind(channel.to_string())
+                        .bind(actor.to_string())
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(storage)?;
+                }
+                let status = sqlx::query_scalar::<_, String>(&sql(&offer, $pg))
+                    .bind(message.to_string())
+                    .bind(channel.to_string())
+                    .bind(actor.to_string())
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(storage)?;
+                tx.commit().await.map_err(storage)?;
+                Ok(status)
+            }};
+        }
+        match &self.store {
+            Store::Pg(pool) => activation!(pool, true),
+            Store::Sqlite(pool) => activation!(pool, false),
+        }
+    }
+
+    pub(super) async fn admit_feedback(&self) -> Result<()> {
+        let query = format!("{ADMIT} from {SOURCE_AUTHORITY}
             where m.sequence>r.after_sequence and m.sequence>coalesce((select max(prior.source_sequence) from feedback_jobs prior
                 where prior.channel_id=c.id),r.after_sequence)
             order by m.sequence limit 32 on conflict(source_message_id) do nothing");

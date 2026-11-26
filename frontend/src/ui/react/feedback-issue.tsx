@@ -1,6 +1,6 @@
 import { Button, Dialog, Status } from "@sproyt/ui/react";
 import { useEffect, useState } from "react";
-import { feedbackStage, type FeedbackIssue } from "../../feedback-issue";
+import { activationLabels, feedbackStage, type FeedbackActivation, type FeedbackIssue } from "../../feedback-issue";
 import type { WorkItemApi } from "../../work-items";
 
 type Source = { api: WorkItemApi; channelId: string; messageId: string };
@@ -9,19 +9,34 @@ export function FeedbackIssueMenuAction({ api, channelId, messageId, onOpen }: S
   onOpen: (issue: FeedbackIssue) => void;
 }) {
   const [issue, setIssue] = useState<FeedbackIssue | null>(null);
+  const [activation, setActivation] = useState<FeedbackActivation | null>(null);
+  const [submitting, setSubmitting] = useState(false);
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     const controller = new AbortController();
     setFailed(false);
     setIssue(null);
+    setActivation(null);
     void api.feedbackIssue(channelId, messageId, controller.signal)
-      .then(value => { if (!controller.signal.aborted) setIssue(value); })
+      .then(async value => {
+        if (controller.signal.aborted) return;
+        if (value) return setIssue(value);
+        const status = await api.feedbackActivation(channelId, messageId, false, controller.signal);
+        if (!controller.signal.aborted) setActivation(status);
+      })
       .catch(() => { if (!controller.signal.aborted) setFailed(true); });
     return () => controller.abort();
   }, [api, channelId, messageId, attempt]);
   if (failed) return <Button variant="quiet" onClick={() => setAttempt(attempt + 1)}>Prøv saksoppslaget igjen</Button>;
-  return issue && <Button onClick={() => onOpen(issue)}>GitHub-sak #{issue.issue_number}</Button>;
+  if (issue) return <Button onClick={() => onOpen(issue)}>GitHub-sak #{issue.issue_number}</Button>;
+  if (activation === "available") return <Button variant="quiet" disabled={submitting} onClick={async () => {
+    setSubmitting(true);
+    try { setActivation(await api.feedbackActivation(channelId, messageId, true)); }
+    catch { setFailed(true); }
+    finally { setSubmitting(false); }
+  }}>{submitting ? "Aktiverer …" : activationLabels.available}</Button>;
+  return activation && <span role="status">{activationLabels[activation]}</span>;
 }
 
 export function FeedbackIssueDialog({ api, channelId, messageId, initialIssue, onClose }: Source & {

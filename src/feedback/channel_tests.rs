@@ -153,6 +153,52 @@ async fn feedback_contract(f: Fixture) {
     );
     f.service.admit_feedback().await.unwrap();
     assert_eq!(count(store, jobs, f.channel).await, 1);
+    let actor = UserId::from_uuid(f.reviewer);
+    let old = f.message;
+    assert_eq!(
+        f.service
+            .feedback_activation(&actor, f.channel, old, false)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("available")
+    );
+    assert!(
+        f.service
+            .feedback_activation(&UserId::from_uuid(f.outsider), f.channel, old, true)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        f.service
+            .feedback_activation(&actor, Uuid::now_v7(), old, true)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let (first, retry) = tokio::join!(
+        f.service.feedback_activation(&actor, f.channel, old, true),
+        f.service.feedback_activation(&actor, f.channel, old, true),
+    );
+    for receipt in [first, retry] {
+        assert_eq!(receipt.unwrap().as_deref(), Some("pending"));
+    }
+    f.service.admit_feedback().await.unwrap();
+    assert_eq!(count(store, jobs, f.channel).await, 2);
+    execute(
+        store,
+        "update feedback_routes set enabled=false where channel_id=?uuid",
+        &[f.channel],
+    )
+    .await;
+    assert!(
+        f.service
+            .feedback_activation(&actor, f.channel, old, true)
+            .await
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[tokio::test]

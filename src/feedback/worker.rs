@@ -120,22 +120,24 @@ impl WorkItems {
         let now = Utc::now().timestamp();
         // Serialise new decisions for this repository across replicas. An uncertain
         // write must reconcile before another message can create a competing issue.
-        let next="select cast(j.source_message_id as text) from feedback_jobs j
-            where j.status in ('pending','sending','uncertain','published','done') and j.available_at<=?
-            and (j.status<>'pending' or exists(select 1 from feedback_routes route where route.channel_id=j.channel_id and route.enabled))
-            and (j.status<>'pending' or not exists(select 1 from feedback_jobs p where p.repository_id=j.repository_id
-                and p.status in ('pending','sending','uncertain') and
-                (p.source_sequence,p.source_message_id)<(j.source_sequence,j.source_message_id)))
+        let ready = "j.status<>'pending' or (
+            exists(select 1 from feedback_routes route where route.channel_id=j.channel_id and route.enabled)
+            and not exists(select 1 from feedback_jobs p where p.repository_id=j.repository_id
+                and p.source_message_id<>j.source_message_id and (p.status in ('sending','uncertain')
+                or (p.status='pending' and (case when p.lease_token is null then 1 else 0 end,p.source_sequence,p.source_message_id)
+                    <(case when j.lease_token is null then 1 else 0 end,j.source_sequence,j.source_message_id)))))";
+        let next=format!("select cast(j.source_message_id as text) from feedback_jobs j
+            where j.status in ('pending','sending','uncertain','published','done') and j.available_at<=? and ({ready})
             and (j.status<>'done' or j.github_checked_at=0 or
                 (j.publication_kind='create' and not exists(select 1 from feedback_heart h
                     where h.source_message_id=j.source_message_id and h.stage in ('resolved','rejected','failed'))) or
                 (j.publication_kind<>'create' and j.github_state='open' and not exists(select 1 from feedback_jobs base
                     where base.repository_id=j.repository_id and base.issue_id=j.issue_id and base.status in ('published','done')
                     and (base.publication_kind='create' or base.source_message_id<j.source_message_id))))
-            order by j.available_at,j.source_sequence,j.source_message_id limit 8";
+            order by j.available_at,j.source_sequence,j.source_message_id limit 8");
         let ids = run_query!(
             self,
-            next,
+            &next,
             [now],
             sqlx::query_scalar::<_, String>,
             fetch_all
@@ -143,18 +145,42 @@ impl WorkItems {
         for source in ids {
             let lease = Uuid::now_v7().to_string();
             let now = Utc::now().timestamp();
-            let claim="update feedback_jobs set available_at=?,lease_token=?uuid,attempts=attempts+case when status='pending' then 1 else 0 end
-                where source_message_id=?uuid and available_at<=? and status in ('pending','sending','uncertain','published','done')
+            let claim=format!("update feedback_jobs as j set available_at=?,lease_token=?uuid,attempts=attempts+case when status='pending' then 1 else 0 end
+                where source_message_id=?uuid and available_at<=? and status in ('pending','sending','uncertain','published','done') and ({ready})
                 returning cast(source_message_id as text) as source,status,source_body,attempts,installation_id,repository_id,
-                    repository_name,bot_login,published_title,published_body,issue_number,issue_id";
-            let Some(job) = run_query!(
-                self,
-                claim,
-                [now + 600, &lease, &source, now],
-                sqlx::query_as::<_, Job>,
-                fetch_optional
-            )?
-            else {
+                    repository_name,bot_login,published_title,published_body,issue_number,issue_id");
+            macro_rules! claim_job {
+                ($executor:expr,$pg:expr) => {
+                    sqlx::query_as::<_, Job>(&sql(&claim, $pg))
+                        .bind(now + 600)
+                        .bind(&lease)
+                        .bind(&source)
+                        .bind(now)
+                        .fetch_optional($executor)
+                        .await
+                        .map_err(storage)?
+                };
+            }
+            let claimed = match &self.store {
+                Store::Sqlite(pool) => claim_job!(pool, false),
+                Store::Pg(pool) => {
+                    let mut tx = pool.begin().await.map_err(storage)?;
+                    // An older message may be enqueued after the candidate scan. Serialise
+                    // claims per repository and recheck the queue in a fresh statement.
+                    sqlx::query(
+                        "select pg_advisory_xact_lock(repository_id) from feedback_jobs
+                        where source_message_id=$1::uuid and status='pending'",
+                    )
+                    .bind(&source)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(storage)?;
+                    let job = claim_job!(&mut *tx, true);
+                    tx.commit().await.map_err(storage)?;
+                    job
+                }
+            };
+            let Some(job) = claimed else {
                 continue;
             };
             let delay = match self.handle_feedback(&job, &lease, agents, chat).await {

@@ -504,6 +504,10 @@ pub(super) fn build_router(state: AppState, operations: OperationalState) -> Rou
             get(crate::web::feedback::get),
         )
         .route(
+            "/api/v1/channels/{id}/messages/{message_id}/feedback-issue/activation",
+            get(crate::web::feedback::activation).post(crate::web::feedback::activation),
+        )
+        .route(
             "/api/v1/channels/{id}/messages/{message_id}/feedback-issue/review",
             post(crate::web::feedback::review),
         )

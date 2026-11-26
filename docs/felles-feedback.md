@@ -39,6 +39,8 @@ psql -X -v apply=on -f tools/configure-felles-feedback.sql
 psql -X -v stop=on -v apply=on -f tools/configure-felles-feedback.sql
 ```
 
+Produkteigaren kan òg velje ei eldre, menneskeskriven rotmelding i kanalen. Opne **Fleire meldingsval → Aktiver tilbakemeldinga**. Meldinga får plass i den vanlege vurderingskøen. Gjentekne trykk nyttar same jobb. Andre eldre meldingar ventar til produkteigaren sjølv vel dei.
+
 4. Status blir normalt henta om lag kvart andre minutt så lenge ei sak ventar. For raskare oppdatering kan GitHub App sende `issues`-hendingar til `/api/v1/integrations/github/feedback` på den valde installasjonen. Set `github.feedbackWebhookSecret` til namnet på eit Kubernetes-Secret med nøkkelen `webhook-secret`, og bruk same hemmelegheit i GitHub. Etter kontroll av HMAC-signaturen vekker ei statusendring, lukking eller gjenopning lesinga for rett installasjon, repo og sak. Eit nytt API-oppslag stadfestar tilstanden før Heart får sluttårsaka. Periodisk avstemming fangar opp forseinka eller tapte hendingar.
 5. I første levande prøve, følg éi medviten tilbakemelding frå den rette kanalen, kontroller den faktiske publiserte teksten, gjer ei produkteigarvurdering og stadfest sluttgreina når saka blir lukka.
 

@@ -62,3 +62,29 @@ test("source message opens the published issue and retries the owner's exact ass
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
 });
+
+test("the product owner can activate a selected older message once", async ({ page }) => {
+  const bundle = await readFile(new URL("../dist/app.js", import.meta.url));
+  if (process.env.SPROYT_E2E_EMBEDDED_CLIENT !== "1") {
+    await page.route(/\/assets\/app\/[^/]+\/app.js$/, route => route.fulfill({ contentType: "text/javascript", body: bundle }));
+  }
+  let activated = 0;
+  await page.route(/\/feedback-issue(?:\?|$)/, route => route.fulfill({json:null}));
+  await page.route(/\/feedback-issue\/activation(?:\?|$)/, route => {
+    if (route.request().method() === "POST") activated++;
+    return route.fulfill({ json: activated ? "pending" : "available" });
+  });
+  await page.goto("/?participant=feedback-owner&ui=react");
+  const app = page.locator("#sproyt-react-preview");
+  const source = "Tidlegare melding for vurdering";
+  await app.getByRole("textbox", { name: "Skriv melding", exact: true }).fill(source);
+  await app.getByRole("button", { name: /^Send / }).click();
+  const menu = app.locator("[data-message-id]").filter({hasText:source}).first().getByRole("button",{name:"Fleire meldingsval"});
+  await menu.click();
+  await app.getByRole("button",{name:"Aktiver tilbakemeldinga"}).click();
+  await expect(app.getByText("Meldinga er i kø for vurdering")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await menu.click();
+  await expect(app.getByText("Meldinga er i kø for vurdering")).toBeVisible();
+  expect(activated).toBe(1);
+});

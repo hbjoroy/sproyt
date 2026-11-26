@@ -1,6 +1,6 @@
 import { HttpClient, HttpError } from "./api";
 import { isRecord } from "./types";
-import { decodeFeedbackIssue, feedbackIssuePath, type FeedbackIssue } from "./feedback-issue";
+import { decodeFeedbackActivation, decodeFeedbackIssue, feedbackIssuePath, type FeedbackIssue } from "./feedback-issue";
 
 export type WorkApplication = Readonly<{ id: string; key: string; name: string }>;
 export type WorkItemDraft = Readonly<{ source_body: string; title: string; suggested_by_model: boolean }>;
@@ -155,6 +155,15 @@ export class WorkItemApi {
       this.clearAdmission(`sproyt-feedback-review:${owner}:${channelId}:${messageId}`);
     }
     return issue;
+  }
+
+  feedbackActivation(channelId: string, messageId: string, activate: boolean, signal?: AbortSignal) {
+    const owner = this.identity();
+    return this.http.json(feedbackIssuePath(channelId, messageId) + "/activation", decodeFeedbackActivation, {
+      signal, method: activate ? "POST" : "GET",
+      headers: { "x-sproyt-account": owner, ...(activate ? { "Content-Type": "application/json" } : {}) },
+      body: activate ? "{}" : undefined,
+    }, () => this.identity() === owner);
   }
 
   pendingFeedbackReview(channelId: string, messageId: string): string | null {
