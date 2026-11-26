@@ -160,6 +160,7 @@ struct FeedbackTask {
     message_id: String,
     title: &'static str,
     source_excerpt: String,
+    issue_url: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -299,6 +300,7 @@ impl WorkItems {
                 Ok(Some(QueueTask::Feedback(FeedbackTask {
                     id: candidate.task_id.clone(),
                     message_id: candidate.message_id.clone(),
+                    issue_url: view.issue_url,
                     source_excerpt: view.source_body.chars().take(100).collect(),
                     title,
                 })))

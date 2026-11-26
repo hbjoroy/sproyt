@@ -1,10 +1,31 @@
 import { Button, Dialog, Status } from "@sproyt/ui/react";
 import { useEffect, useState } from "react";
-import { activationLabels, feedbackStage, intakeStage, type Clarification, type FeedbackActivation, type FeedbackPanel, type FeedbackIntake } from "../../feedback-issue";
+import { activationLabels, feedbackStage, githubIssueNumber, intakeStage, type Clarification, type FeedbackActivation, type FeedbackPanel, type FeedbackIntake } from "../../feedback-issue";
 import { HttpError } from "../../api";
 import type { WorkItemApi } from "../../work-items";
 
 type Source = { api: WorkItemApi; channelId: string; messageId: string };
+
+export function GitHubIssueLink({ url }: { url: string }) {
+  const number = githubIssueNumber(url);
+  return number && <a href={url} target="_blank" rel="noopener noreferrer">Opne sak #{number} i GitHub</a>;
+}
+
+export function MessageFeedbackLink({ api, channelId, messageId, receiptCount }: Source & { receiptCount: number }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    const controller = new AbortController();
+    setFailed(false);
+    void api.feedbackIssue(channelId, messageId, controller.signal).then(issue => {
+      if (!controller.signal.aborted) setUrl(issue?.issue_url ?? null);
+    }).catch(() => { if (!controller.signal.aborted) setFailed(true); });
+    return () => controller.abort();
+  }, [api, channelId, messageId, receiptCount, attempt]);
+  if (failed) return <Button variant="quiet" onClick={() => setAttempt(value => value + 1)}>Prøv saksoppslaget igjen</Button>;
+  return url && <div><GitHubIssueLink url={url} /></div>;
+}
 
 export function FeedbackIssueMenuAction({ api, channelId, messageId, onOpen }: Source & {
   onOpen: (panel: FeedbackPanel) => void;
@@ -77,10 +98,13 @@ function ClarificationForm({ intake, api, channelId, messageId, onAccepted }: So
           <option value="existing">Knyt til eksisterande GitHub-sak</option>
           <option value="dismiss">Avslutt utan GitHub-sak</option>
         </select></label>}
+      {!final && intake.candidates.length > 0 && <ul aria-label="Føreslåtte GitHub-saker">{intake.candidates.map(candidate =>
+          <li key={candidate.number}>
+            {choice === "existing" ? <Button type="button" variant="quiet" onClick={() => setNumber(String(candidate.number))}>
+              #{candidate.number} {candidate.title}</Button> : <span>{candidate.title}</span>}
+            {" "}{intake.repository_name && <GitHubIssueLink url={`https://github.com/${intake.repository_name}/issues/${candidate.number}`} />}
+          </li>)}</ul>}
       {choice === "existing" && <>
-        {intake.candidates.length > 0 && <ul aria-label="Føreslåtte GitHub-saker">{intake.candidates.map(candidate =>
-          <li key={candidate.number}><Button variant="quiet" onClick={() => setNumber(String(candidate.number))}>
-            #{candidate.number} {candidate.title}</Button></li>)}</ul>}
         <label>Saksnummer i GitHub<input required type="text" inputMode="numeric" pattern="[1-9][0-9]*" value={number}
           onChange={event => setNumber(event.currentTarget.value)} /></label>
       </>}
@@ -126,7 +150,7 @@ export function FeedbackIssueDialog({ api, channelId, messageId, initialPanel, o
   return <Dialog open title={issue ? `GitHub-sak #${issue.issue_number}` : "Tilbakemeldingsprosess"} closeLabel="Lukk saka" onClose={onClose}>
     <div className="sp-work-item-form">
       {intake && <div><h3>Tilbakemeldinga</h3><p>{intake.source_body}</p></div>}
-      {issue && <a href={issue.issue_url} target="_blank" rel="noopener noreferrer">Opne sak #{issue.issue_number} i GitHub</a>}
+      {issue && <GitHubIssueLink url={issue.issue_url} />}
       <dl>
         <dt>Prosessteg</dt><dd>{stageLabel}</dd>
         {issue?.github_state && <><dt>GitHub-status</dt><dd>{issue.github_state === "closed" ? "Lukka" : issue.github_proposed ? "Føreslått" : issue.github_status_name ?? "Open"}</dd></>}

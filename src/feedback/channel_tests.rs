@@ -218,6 +218,8 @@ async fn feedback_contract(f: Fixture) {
         .unwrap()
         .unwrap();
     assert!(reviewer_view.can_clarify);
+    assert_eq!(reviewer_view.repository_name, "owner/repo");
+    assert!(reviewer_view.issue_url.is_none());
     assert_eq!(reviewer_view.clarification_task_id, Some(task.to_string()));
     for (user, visible) in [(actor.clone(), true), (viewer.clone(), false)] {
         let page = f

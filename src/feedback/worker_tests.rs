@@ -513,6 +513,21 @@ async fn real_heart_drives_intake_worker_and_owner_end_to_end() {
             .unwrap()
             .unwrap();
     assert!(original.can_review);
+    assert_eq!(original.issue_url.as_deref(), Some(ISSUE_URL));
+    let tasks =
+        h.f.service
+            .task_queue(reviewer(), Some(h.f.channel), None, 50, None)
+            .await
+            .unwrap();
+    let tasks = serde_json::to_value(tasks).unwrap();
+    assert!(
+        tasks["tasks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["task"]["message_id"] == source.to_string()
+                && row["task"]["issue_url"] == ISSUE_URL)
+    );
     assert_eq!(
         remote.lock().unwrap().creations,
         1,

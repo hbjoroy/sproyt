@@ -13,6 +13,8 @@ pub(crate) struct IntakeCandidate {
 pub(crate) struct FeedbackIntakeView {
     pub stage: String,
     pub source_body: String,
+    pub repository_name: String,
+    pub issue_url: Option<String>,
     pub heart_instance_id: Option<String>,
     pub clarification_task_id: Option<String>,
     pub review_task_id: Option<String>,
@@ -48,7 +50,8 @@ impl WorkItems {
         message: Uuid,
     ) -> Result<Option<FeedbackIntakeView>> {
         let query=format!("select coalesce(i.stage,'starting'),original.body,cast(i.instance_id as text),
-            cast(i.task_id as text),i.reason,i.candidates,{}, receipt.task_id is not null,original.body<>j.source_body
+            cast(i.task_id as text),i.reason,i.candidates,j.repository_name,
+            case when j.status in ('published','done') then j.issue_url end,{}, receipt.task_id is not null,original.body<>j.source_body
             from feedback_jobs j {SOURCE}
             left join feedback_intakes i on i.source_message_id=j.source_message_id
             left join feedback_intake_results receipt on receipt.task_id=i.task_id
@@ -59,6 +62,8 @@ impl WorkItems {
             Option<String>,
             Option<String>,
             Option<String>,
+            Option<String>,
+            String,
             Option<String>,
             bool,
             bool,
@@ -84,6 +89,8 @@ impl WorkItems {
                 task,
                 reason,
                 candidates,
+                repository_name,
+                issue_url,
                 owner,
                 submitted,
                 edited,
@@ -99,6 +106,8 @@ impl WorkItems {
                 };
                 Ok(FeedbackIntakeView {
                     source_body,
+                    repository_name,
+                    issue_url,
                     heart_instance_id,
                     candidates,
                     reason,

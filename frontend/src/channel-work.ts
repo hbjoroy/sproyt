@@ -1,6 +1,7 @@
 import type { HttpClient } from "./api";
 import { decodeCircleProcesses, type CircleProcess, type CircleProcessPage } from "./circle-processes";
 import { decodePilotTask, type PilotTask } from "./process-pilot";
+import { githubIssueNumber } from "./feedback-issue";
 import { isRecord } from "./types";
 import { decodeWorkItemTask, type WorkItemTask } from "./work-items";
 
@@ -14,7 +15,7 @@ type TaskOrigin = Readonly<{
 export type AssignedProcessTask = TaskOrigin & (
   Readonly<{ kind: "work_item"; task: WorkItemTask }>
   | Readonly<{ kind: "process_pilot"; task: PilotTask }>
-  | Readonly<{ kind: "feedback"; task: Readonly<{ id: string; message_id: string; title: string; source_excerpt?: string }> }>
+  | Readonly<{ kind: "feedback"; task: Readonly<{ id: string; message_id: string; title: string; source_excerpt?: string; issue_url?: string }> }>
 );
 
 type TaskPage = Readonly<{ tasks: readonly AssignedProcessTask[]; next_cursor: string | null }>;
@@ -48,7 +49,9 @@ export function decodeAssignedTasks(value: unknown): TaskPage {
     if (row.kind === "feedback" && isRecord(row.task) && hasText(row.task.id) && hasText(row.task.message_id) && hasText(row.task.title)) {
       const excerpt = row.task.source_excerpt;
       if (excerpt != null && typeof excerpt !== "string") throw invalidTasks();
-      return { ...origin, kind: "feedback", task: { id: row.task.id, message_id: row.task.message_id, title: row.task.title, source_excerpt: excerpt ?? undefined } };
+      const url = row.task.issue_url;
+      return { ...origin, kind: "feedback", task: { id: row.task.id, message_id: row.task.message_id, title: row.task.title, source_excerpt: excerpt ?? undefined,
+        issue_url: typeof url === "string" && githubIssueNumber(url) !== null ? url : undefined } };
     }
     throw invalidTasks();
   });

@@ -37,7 +37,7 @@ import { GettingStarted } from "./getting-started";
 import type { CircleChatAgentApi } from "../../chat-agents";
 import type { WorkApplication, WorkItemApi } from "../../work-items";
 import { WorkItemRegistration } from "./work-item-registration";
-import { FeedbackIssueDialog, FeedbackIssueMenuAction } from "./feedback-issue";
+import { FeedbackIssueDialog, FeedbackIssueMenuAction, MessageFeedbackLink } from "./feedback-issue";
 import type { FeedbackPanel } from "../../feedback-issue";
 import { WorkItemTaskMessage } from "./work-item-task";
 import { WorkItemStatusMessage } from "./work-item-status";
@@ -1035,9 +1035,16 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
             api={host.personalSpace} owner={owner} reference={reference}
             location={snapshot.channelChoices.find(choice => choice.id === reference.channelId)?.name} />;
         }
+        // The feedback agent commits its reaction and thread receipt together.
+        // Look up the association before displaying a link, since anyone can react.
+        const receiptCount = owner && !message.deleted_at && message.parent_message_id === null
+          ? host.reactions(message.id).reduce((count, entry) =>
+            ["📋", "💬", "🔗"].includes(entry.emoji) ? count + entry.count : count, 0) : 0;
         return <><PreviewMessageContent host={host} message={message} channelReferences={message.channel_id === source?.id ? channelReferences : undefined} place={owner && channelId && !pageKey && view === "detail"
           ? { status: placeDiscovery.status(message.id) ?? "pending", googleAvailable: placeDiscovery.googleAvailable(message.id), geoapifyAvailable: placeDiscovery.geoapifyAvailable(message.id), owner, epoch: accountEpoch, channelId,
-            admitted: conversationAdmitted, retry: () => placeDiscovery.retry(message.id) } : undefined} /><PreviewMediaContent body={message.body} mediaOnly /></>;
+            admitted: conversationAdmitted, retry: () => placeDiscovery.retry(message.id) } : undefined} /><PreviewMediaContent body={message.body} mediaOnly />
+          {receiptCount > 0 && <MessageFeedbackLink key={`${owner}:${accountEpoch}:${message.channel_id}:${message.id}`}
+            api={host.workItems} channelId={message.channel_id} messageId={message.id} receiptCount={receiptCount} />}</>;
       }
     },
     renderComposer: target => <div className="sp-composer-dock" key={`${target.channelId}:${target.parentMessageId ?? ""}`}>

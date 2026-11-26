@@ -6,7 +6,7 @@ import type { CircleProcess } from "../../circle-processes";
 import type { ProcessPilotApi } from "../../process-pilot";
 import type { WorkItemApi } from "../../work-items";
 import type { FeedbackPanel } from "../../feedback-issue";
-import { FeedbackIssueDialog } from "./feedback-issue";
+import { FeedbackIssueDialog, GitHubIssueLink } from "./feedback-issue";
 import { ProcessRow } from "./circle-processes";
 import processCss from "./circle-processes.css";
 import { ProcessTaskMessage } from "./process-pilot";
@@ -140,7 +140,9 @@ function AssignedTaskRow({ item, personal, processPilot, workItems, onOpenChanne
         Opne kanalen
       </Button>}
     </div>}
-  </details></li>;
+  </details>
+    {item.kind === "feedback" && item.task.issue_url && <GitHubIssueLink url={item.task.issue_url} />}
+  </li>;
 }
 
 function AssignedTasks({ api, owner, channelId, admitted, processPilot, workItems, onOpenChannel, canOpenOrigin }: ChannelWorkProps) {

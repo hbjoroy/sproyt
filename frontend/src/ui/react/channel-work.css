@@ -40,8 +40,12 @@
   padding: 0;
   margin-block: 0 8px;
 }
-.sp-channel-work-task {
+.sp-channel-work-tasks > li {
   border-block-end: 1px solid var(--sp-line);
+}
+.sp-channel-work-tasks > li > a {
+  display: inline-block;
+  margin-block-end: 10px;
 }
 .sp-channel-work-task summary {
   display: grid;

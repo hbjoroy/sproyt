@@ -18,11 +18,17 @@ export type FeedbackIssue = Readonly<{
   github_proposed?: boolean | null; github_status_name?: string | null;
 }>;
 
+export function githubIssueNumber(url: unknown): number | null {
+  const match = typeof url === "string" && /^https:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/issues\/([1-9]\d*)$/u.exec(url);
+  if (!match || [match[1], match[2]].some(part => part === "." || part === "..")) return null;
+  const number = Number(match[3]);
+  return Number.isSafeInteger(number) ? number : null;
+}
+
 export function decodeFeedbackIssue(value: unknown): FeedbackIssue {
   if (!isRecord(value) || typeof value.issue_number !== "number" || !Number.isSafeInteger(value.issue_number)
     || value.issue_number < 1 || typeof value.issue_url !== "string"
-    || !/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/issues\/[1-9]\d*$/u.test(value.issue_url)
-    || !value.issue_url.endsWith(`/issues/${value.issue_number}`)
+    || githubIssueNumber(value.issue_url) !== value.issue_number
     || !["create", "comment", "duplicate"].includes(String(value.publication_kind))
     || typeof value.stage !== "string" || !Object.hasOwn(feedbackStage, value.stage)
     || typeof value.can_review !== "boolean" || typeof value.published_body !== "string"
@@ -81,7 +87,7 @@ export const intakeStage = {
 } as const;
 
 export type FeedbackIntake = Readonly<{
-  stage: keyof typeof intakeStage; source_body: string; heart_instance_id: string | null;
+  stage: keyof typeof intakeStage; source_body: string; repository_name?: string; heart_instance_id: string | null;
   clarification_task_id: string | null; review_task_id: string | null;
   reason: string | null; candidates: readonly Readonly<{ number: number; title: string }>[];
   can_clarify: boolean; can_review: boolean; dismiss_only?: boolean;
@@ -95,6 +101,7 @@ export type FeedbackPanel = Readonly<{ issue: FeedbackIssue | null; intake: Feed
 
 export function decodeFeedbackIntake(value: unknown): FeedbackIntake {
   if (!isRecord(value) || typeof value.stage !== "string" || !Object.hasOwn(intakeStage, value.stage)
+    || (value.repository_name !== undefined && typeof value.repository_name !== "string")
     || typeof value.source_body !== "string" || typeof value.can_clarify !== "boolean" || typeof value.can_review !== "boolean"
     || ![value.heart_instance_id, value.clarification_task_id, value.review_task_id, value.reason].every(field => field === null || typeof field === "string")
     || (value.dismiss_only !== undefined && typeof value.dismiss_only !== "boolean")

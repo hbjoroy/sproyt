@@ -29,17 +29,28 @@ test("source message opens the published issue and retries the owner's exact ass
   const app = page.locator("#sproyt-react-preview");
   const input = app.getByRole("textbox", { name: "Skriv melding", exact: true });
   await expect(input).toBeEnabled({ timeout: 15000 });
-  const sourceText = "Eg vil finne att meldinga frå i går.";
+  const sourceText = `Eg vil finne att meldinga frå i går. ${crypto.randomUUID()}`;
   await input.fill(sourceText);
   await app.getByRole("button", { name: /^Send / }).click();
   const row = app.locator("[data-message-id]").filter({ hasText: sourceText }).first();
   await expect(row).toBeVisible();
-  expect(reads).toHaveLength(0);
   const messageId = await row.getAttribute("data-message-id");
+  const sourceReads = () => reads.filter(path => path.endsWith(`/messages/${messageId}/feedback-issue`));
+  expect(sourceReads()).toHaveLength(0);
+  await row.getByRole("button", { name: "Legg til reaksjon", exact: true }).click();
+  const picker = app.getByRole("dialog", { name: "Reager på meldinga" });
+  await picker.locator("summary", { hasText: "Eigen emoji" }).click();
+  await picker.getByRole("textbox", { name: "Lim inn Unicode-emoji" }).fill("📋");
+  await picker.getByRole("button", { name: "Bruk emoji" }).click();
+  const shortcut = row.getByRole("link", { name: "Opne sak #42 i GitHub" });
+  await expect(shortcut).toHaveAttribute("href", issue.issue_url);
+  await expect(shortcut).toHaveAttribute("target", "_blank");
+  await page.reload();
+  await expect(shortcut).toBeVisible();
+  const beforeMenu = sourceReads().length;
   await row.getByRole("button", { name: "Fleire meldingsval" }).click();
   await app.getByRole("button", { name: "GitHub-sak #42" }).click();
-  expect(reads).toHaveLength(1);
-  expect(reads[0]).toContain(`/messages/${messageId}/feedback-issue`);
+  expect(sourceReads()).toHaveLength(beforeMenu + 1);
   const dialog = app.getByRole("dialog", { name: "GitHub-sak #42" });
   await expect(dialog.getByRole("link", { name: "Opne sak #42 i GitHub" })).toHaveAttribute("href", issue.issue_url);
   await expect(dialog.getByText("Føreslått", { exact: true })).toBeVisible();
@@ -100,7 +111,7 @@ test("owner can clarify a pre-publication message from their task list and inspe
   const taskId = "26c625f8-2e5a-468d-96b8-8e298541ea0b";
   const intake = { stage: "clarify", can_clarify: true, can_review: false, source_body: source,
     heart_instance_id: "80030ae5-0f96-45da-841f-761402892539", clarification_task_id: taskId, review_task_id: null,
-    reason: "To opne saker kan gjelde denne meldinga.", candidates: [{number: 27, title: "Bilete med skjermlesar"}] };
+    repository_name: "example/app", reason: "To opne saker kan gjelde denne meldinga.", candidates: [{number: 27, title: "Bilete med skjermlesar"}] };
   let selected = false;
   const sent: unknown[] = [];
   const next = { ...intake, can_clarify: false, clarification_task_id: null, reason: null, candidates: [], stage: "comment" };
@@ -132,6 +143,8 @@ test("owner can clarify a pre-publication message from their task list and inspe
   const dialog = app.getByRole("dialog", { name: "Tilbakemeldingsprosess" });
   await expect(dialog.getByText(source, { exact: true })).toBeVisible();
   await expect(dialog.getByText(intake.reason)).toBeVisible();
+  await expect(dialog.getByRole("link", { name: "Opne sak #27 i GitHub" })).toHaveAttribute("href", "https://github.com/example/app/issues/27");
+  await expect(dialog.getByLabel("Avgjerd")).toHaveValue("");
   await expect(dialog.getByRole("button", { name: "Registrer avklaring" })).toBeDisabled();
   await dialog.getByLabel("Avgjerd").selectOption("existing");
   await dialog.getByRole("button", { name: "#27 Bilete med skjermlesar" }).click();
@@ -183,7 +196,7 @@ test("four carried-over clarifications remain distinct in channel processes and 
     const channel = new URL(route.request().url()).searchParams.get("channel_id");
     return route.fulfill({ json: { tasks: messages.flatMap((text, index) => reviewed && index === 4 ? [] : [{
       kind: "feedback", circle_id: null, circle_name: null, channel_id: channel, channel_name: "Tilbakemeldingar",
-      task: { id: tasks[index], message_id: ids[index], source_excerpt: text, title: index === 4 ? "Vurder GitHub-saka" : "Avklar tilbakemelding" },
+      task: { id: tasks[index], message_id: ids[index], source_excerpt: text, issue_url: index === 4 ? issue.issue_url : null, title: index === 4 ? "Vurder GitHub-saka" : "Avklar tilbakemelding" },
     }]), next_cursor: null } });
   });
   await page.route(/\/feedback-issue(?:\/intake|\/review)?(?:\?|$)/, route => {
@@ -225,6 +238,8 @@ test("four carried-over clarifications remain distinct in channel processes and 
   await expect(clarification.getByLabel("Avgjerd")).toHaveCount(0);
   await expect(clarification.getByRole("button", { name: "Registrer avklaring" })).toBeDisabled();
   await clarification.getByRole("button", { name: "Lukk saka" }).click();
+  await expect(assigned.getByRole("link", { name: "Opne sak #87 i GitHub" })).toHaveAttribute("href", issue.issue_url);
+  await expect(assigned.getByRole("link")).toHaveCount(1);
   const reviewTask = assigned.locator("details").filter({hasText:"Vurder GitHub-saka"});
   await reviewTask.locator("summary").click();
   await reviewTask.getByRole("button", { name: "Opne oppgåva" }).click();
