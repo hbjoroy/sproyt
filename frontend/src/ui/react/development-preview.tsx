@@ -38,7 +38,7 @@ import type { CircleChatAgentApi } from "../../chat-agents";
 import type { WorkApplication, WorkItemApi } from "../../work-items";
 import { WorkItemRegistration } from "./work-item-registration";
 import { FeedbackIssueDialog, FeedbackIssueMenuAction } from "./feedback-issue";
-import type { FeedbackIssue } from "../../feedback-issue";
+import type { FeedbackPanel } from "../../feedback-issue";
 import { WorkItemTaskMessage } from "./work-item-task";
 import { WorkItemStatusMessage } from "./work-item-status";
 import { workItemStatusId, workItemTaskId } from "../../work-items";
@@ -490,7 +490,7 @@ function MessageActions({ host, message, threadAction, openThread, threadHasRepl
   const messageLink = viewHref({ kind: "conversation", channelId: message.channel_id, messageId: message.id,
     sequence: message.sequence, ...(message.parent_message_id ? { threadId: message.parent_message_id } : {}) }, window.location.href);
   const [issueOpen, setIssueOpen] = useState(false);
-  const [feedback, setFeedback] = useState<{ issue: FeedbackIssue; context: string } | null>(null);
+  const [feedback, setFeedback] = useState<{ panel: FeedbackPanel; context: string } | null>(null);
   const feedbackContext = `${accountEpoch}/${owner}/${message.channel_id}/${message.id}`;
   const [hasExistingItems, setHasExistingItems] = useState(false);
   const availabilityAnchor = useRef<HTMLDivElement>(null);
@@ -540,7 +540,7 @@ function MessageActions({ host, message, threadAction, openThread, threadHasRepl
         <PreviewMessageMutations message={message} host={host} />
         {menuOpen && owner && <FeedbackIssueMenuAction key={feedbackContext}
           api={host.workItems} channelId={message.channel_id} messageId={message.id}
-          onOpen={issue => { close(); setFeedback({ issue, context: feedbackContext }); }} />}
+          onOpen={panel => { close(); setFeedback({ panel, context: feedbackContext }); }} />}
         {canHaveWorkItems
           && <WorkItemMenuAction host={host} message={message} hasApplications={apps.length > 0} hasExistingItems={hasExistingItems} onOpen={() => { close(); setIssueOpen(true); }} />}
       </>} />
@@ -552,7 +552,7 @@ function MessageActions({ host, message, threadAction, openThread, threadHasRepl
     </Dialog>}
     {issueOpen && <WorkItemRegistration api={host.workItems} message={message} open onClose={() => setIssueOpen(false)} />}
     {feedback?.context === feedbackContext && <FeedbackIssueDialog api={host.workItems} messageId={message.id}
-      channelId={message.channel_id} initialIssue={feedback.issue} onClose={() => setFeedback(null)} />}
+      channelId={message.channel_id} initialPanel={feedback.panel} onClose={() => setFeedback(null)} />}
   </div>;
 }
 

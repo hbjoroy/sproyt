@@ -70,6 +70,48 @@ impl GitHub {
         Ok(result)
     }
 
+    pub(crate) async fn feedback_candidate(
+        &self,
+        target: &Destination,
+        token: &str,
+        number: i64,
+    ) -> Result<Option<Candidate>, &'static str> {
+        let response = self
+            .request(
+                Method::GET,
+                &format!("/repos/{}/issues/{number}", target.repository),
+                token,
+            )
+            .send()
+            .await
+            .map_err(|_| "GitHub transport unavailable")?;
+        if matches!(response.status().as_u16(), 404 | 410) {
+            return Ok(None);
+        }
+        if !response.status().is_success() {
+            return Err("GitHub rejected the request");
+        }
+        let value = Self::decode_response(response).await?;
+        if !value["pull_request"].is_null() {
+            return Ok(None);
+        }
+        let checked = status(&value, target)?;
+        if checked.issue.number != number {
+            return Err("issue number mismatch");
+        }
+        let title = value["title"].as_str().ok_or("missing title")?;
+        let body = value["body"].as_str().unwrap_or("");
+        if title.len() + body.len() > 65000 {
+            return Ok(None);
+        }
+        Ok(Some(Candidate {
+            number,
+            title: title.to_owned(),
+            body: body.to_owned(),
+            eligible: checked.eligible,
+        }))
+    }
+
     // None signals that a complete comparison exceeds the model's budget.
     pub(crate) async fn feedback_candidates(
         &self,

@@ -14,6 +14,7 @@ type TaskOrigin = Readonly<{
 export type AssignedProcessTask = TaskOrigin & (
   Readonly<{ kind: "work_item"; task: WorkItemTask }>
   | Readonly<{ kind: "process_pilot"; task: PilotTask }>
+  | Readonly<{ kind: "feedback"; task: Readonly<{ id: string; message_id: string; title: string; source_excerpt?: string }> }>
 );
 
 type TaskPage = Readonly<{ tasks: readonly AssignedProcessTask[]; next_cursor: string | null }>;
@@ -44,6 +45,11 @@ export function decodeAssignedTasks(value: unknown): TaskPage {
       circle_id: row.circle_id, circle_name: row.circle_name };
     if (row.kind === "work_item") return { ...origin, kind: row.kind, task: decodeWorkItemTask(row.task) };
     if (row.kind === "process_pilot") return { ...origin, kind: row.kind, task: decodePilotTask(row.task) };
+    if (row.kind === "feedback" && isRecord(row.task) && hasText(row.task.id) && hasText(row.task.message_id) && hasText(row.task.title)) {
+      const excerpt = row.task.source_excerpt;
+      if (excerpt != null && typeof excerpt !== "string") throw invalidTasks();
+      return { ...origin, kind: "feedback", task: { id: row.task.id, message_id: row.task.message_id, title: row.task.title, source_excerpt: excerpt ?? undefined } };
+    }
     throw invalidTasks();
   });
   return { tasks, next_cursor: value.next_cursor };

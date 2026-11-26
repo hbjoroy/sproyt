@@ -255,8 +255,16 @@ with eligible as ({eligible}), visible_work as (
  from feedback_heart h join feedback_jobs j on j.source_message_id=h.source_message_id
  join eligible e on e.id=j.channel_id join messages m on m.id=j.source_message_id and m.channel_id=e.id and m.deleted_at is null
  where j.publication_kind='create' and j.status in ('published','done')
+ union all
+ select 'feedback:'||cast(j.source_message_id as text),'feedback',cast(j.source_message_id as text),
+ cast(j.channel_id as text),e.name,case when j.issue_number is null then 'Tilbakemelding: '||substr(m.body,1,120)
+ else 'GitHub #'||cast(j.issue_number as text)||' · '||coalesce(j.published_title,substr(m.body,1,120)) end,
+ coalesce(i.stage,'starting'),'feedback-intake','v2','sproyt','1.0.0',cast(i.instance_id as text),null,{feedback_time}
+ from feedback_jobs j left join feedback_intakes i on i.source_message_id=j.source_message_id
+ join eligible e on e.id=j.channel_id join messages m on m.id=j.source_message_id and m.channel_id=e.id and m.deleted_at is null
+ where j.intake_version=1
 )
-select * from items where (?3=1 or (lower(status) not in ('completed','cancelled','canceled','terminated') and not (kind='feedback' and status in ('resolved','rejected','failed'))))
+select * from items where (?3=1 or (lower(status) not in ('completed','cancelled','canceled','terminated') and not (kind='feedback' and status in ('resolved','rejected','failed','ignored','linked'))))
  and (created_at>?4 or (created_at=?4 and key>?5))
 {result_filter} and (?7='' or key=?7)
 order by created_at,key limit ?6
@@ -272,7 +280,10 @@ fn step_sql(kind: &str, pg: bool) -> String {
             when 'waiting_for_close' then 'await-github' else stage end as name,
             case when stage in ('resolved','rejected','review_submitted') then 'completed'
                  when stage='failed' then 'failed' else 'waiting' end as status,
-            cast(null as text) as occurred_at,cast(null as text) as message_id from feedback_heart where cast(source_message_id as text)=?1",
+            cast(null as text) as occurred_at,cast(null as text) as message_id from feedback_heart where cast(source_message_id as text)=?1
+            union all select stage,case when stage in ('ignored','linked','resolved','rejected') then 'completed'
+                 when stage='failed' then 'failed' else 'waiting' end,null,null
+            from feedback_intakes where cast(source_message_id as text)=?1",
         "process" => {
             return sql(
                 &format!(
@@ -327,6 +338,8 @@ fn history_sql(kind: &str, pg: bool) -> String {
             "process" => {
                 "select event_type as name,case when event_type='process.failed' then 'failed' else 'completed' end as status,cast(occurred_at as text) as occurred_at from process_events where cast(process_link_id as text)=?1 order by occurred_at desc,id desc limit 21"
             }
+            "feedback" => "select node_id as name,'completed' as status,cast(recorded_at as text) as occurred_at
+                from feedback_intake_results where cast(source_message_id as text)=?1 order by recorded_at desc,task_id desc limit 21",
             "work_status" => {
                 "select 'status-change' as name,to_status as status,cast(created_at as text) as occurred_at from work_item_status_history where cast(change_id as text)=?1 order by created_at desc,id desc limit 21"
             }
@@ -356,6 +369,15 @@ fn step_name(value: &str) -> String {
         "technical-review" => "Teknisk vurdering",
         "final-confirmation" => "Endeleg stadfesting",
         "review" => "Vurdering",
+        "qualify" => "Vurder om meldinga er ei sak",
+        "match" => "Finn rett GitHub-sak",
+        "clarify" | "clarify-publication" | "final-clarify" => "Avklar tilbakemeldinga",
+        "create" | "retry-create" => "Opprett ny GitHub-sak",
+        "comment" | "retry-comment" => "Legg til opplysningar",
+        "link" | "retry-link" => "Knyt til eksisterande sak",
+        "ack" => "Kvitter i tråden",
+        "ignored" => "Avslutta utan sak",
+        "linked" => "Knytt til eksisterande sak",
         "await-github" => "Ventar på lukking i GitHub",
         "closure" => "Lukkegrunn frå GitHub",
         "resolved" => "Løyst",

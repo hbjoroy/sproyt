@@ -1,7 +1,7 @@
 use crate::{
     server::AppState,
     web::http::{WsQuery, auth_error_response, authenticate_http, repository_response},
-    work_items::FeedbackReview,
+    work_items::{FeedbackClarification, FeedbackReview},
 };
 use axum::{
     Json,
@@ -26,6 +26,53 @@ pub(crate) async fn get(
     };
     match service
         .feedback_issue(principal.user.id, channel, message)
+        .await
+    {
+        Ok(view) => ([(header::CACHE_CONTROL, "private, no-store")], Json(view)).into_response(),
+        Err(error) => repository_response(error),
+    }
+}
+
+pub(crate) async fn intake(
+    State(state): State<AppState>,
+    Path((channel, message)): Path<(Uuid, Uuid)>,
+    Query(query): Query<WsQuery>,
+    headers: HeaderMap,
+) -> Response {
+    let actor = match crate::web::personal_space::authenticated_user(&state, query, &headers).await
+    {
+        Ok(user) => user.id,
+        Err(response) => return response,
+    };
+    let Some(service) = state.work_items else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    match service.feedback_intake(actor, channel, message).await {
+        Ok(view) => ([(header::CACHE_CONTROL, "private, no-store")], Json(view)).into_response(),
+        Err(error) => repository_response(error),
+    }
+}
+
+pub(crate) async fn clarify(
+    State(state): State<AppState>,
+    Path((channel, message)): Path<(Uuid, Uuid)>,
+    Query(query): Query<WsQuery>,
+    headers: HeaderMap,
+    Json(body): Json<FeedbackClarification>,
+) -> Response {
+    let actor = match crate::web::personal_space::authenticated_user(&state, query, &headers).await
+    {
+        Ok(user) => user.id,
+        Err(response) => return response,
+    };
+    let Some(service) = state.work_items else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    if std::env::var("SPROYT_FEEDBACK_ENABLED").as_deref() != Ok("true") {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    }
+    match service
+        .clarify_feedback(actor, channel, message, body)
         .await
     {
         Ok(view) => ([(header::CACHE_CONTROL, "private, no-store")], Json(view)).into_response(),

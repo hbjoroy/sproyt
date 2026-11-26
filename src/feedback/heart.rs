@@ -8,7 +8,7 @@ const ACTIVE: &str = "stage in ('starting','review','review_submitted','waiting_
 
 // The source and its acknowledgement are interchangeable only when both the
 // persisted receipt and an actual live message in this channel prove the link.
-const SOURCE: &str = "
+pub(super) const SOURCE: &str = "
  join messages m on m.channel_id=j.channel_id and m.deleted_at is null
    and (m.id=j.source_message_id or (m.id=j.ack_message_id and m.sender_id=j.agent_id
         and m.parent_message_id=j.source_message_id))
@@ -16,7 +16,7 @@ const SOURCE: &str = "
    and original.deleted_at is null
  join channel_memberships cm on cm.channel_id=j.channel_id
 ";
-const OWNER: &str = "
+pub(super) const OWNER: &str = "
  j.reviewer_id=cm.user_id and cm.role<>'observer' and exists(
    select 1 from feedback_routes r
    join work_applications a on a.id=r.application_id and a.enabled
@@ -45,6 +45,7 @@ pub(crate) struct FeedbackIssue {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct FeedbackReview {
+    pub task_id: Option<Uuid>,
     pub assessment: String,
     pub request_id: Uuid,
 }
@@ -68,6 +69,8 @@ macro_rules! query_store {
     }};
 }
 
+pub(super) use query_store;
+
 struct FeedbackRun {
     agent: String,
     reviewer: String,
@@ -84,13 +87,20 @@ impl WorkItems {
         message: Uuid,
     ) -> Result<Option<FeedbackIssue>> {
         let query = format!("select j.issue_number,j.issue_url,j.publication_kind,j.published_title,
-            j.published_body,coalesce(h.stage,case when c.source_message_id is null then 'linked' else 'starting' end),
-            cast(h.instance_id as text),case when h.stage='review' and j.publication_kind='create' and {OWNER}
+            j.published_body,case when i.source_message_id is not null then case i.stage
+              when 'await-github' then 'waiting_for_close' when 'review' then case when encounter.task_id is null then 'review' else 'review_submitted' end
+              when 'resolved' then 'resolved' when 'rejected' then 'rejected' when 'failed' then 'failed'
+              when 'linked' then 'linked' else 'starting' end
+              else coalesce(h.stage,case when c.source_message_id is null then 'linked' else 'starting' end) end,
+            cast(coalesce(i.instance_id,h.instance_id) as text),case when (h.stage='review' or
+              (i.stage='review' and i.task_id is not null and encounter.task_id is null)) and j.publication_kind='create' and {OWNER}
               then true else false end,coalesce(c.github_state,j.github_state),coalesce(c.github_proposed,j.github_proposed),coalesce(c.github_status_name,j.github_status_name)
             from feedback_jobs j {SOURCE}
             left join feedback_jobs c on c.repository_id=j.repository_id and c.issue_id=j.issue_id
               and c.channel_id=j.channel_id and c.publication_kind='create' and c.status in ('published','done')
             left join feedback_heart h on h.source_message_id=c.source_message_id
+            left join feedback_intakes i on i.source_message_id=j.source_message_id
+            left join feedback_intake_results encounter on encounter.task_id=i.task_id
             where cm.user_id=?uuid and j.channel_id=?uuid and m.id=?uuid and j.status in ('published','done')");
         type Projection = (
             i64,
@@ -157,6 +167,21 @@ impl WorkItems {
         if assessment.is_empty() || assessment.chars().count() > 2000 || assessment.contains('\0') {
             return Err(RepositoryError::Conflict);
         }
+        if let Some(task) = command.task_id {
+            self.submit_intake_review(
+                &actor,
+                channel,
+                message,
+                task,
+                command.request_id,
+                assessment,
+            )
+            .await?;
+            return self
+                .feedback_issue(actor, channel, message)
+                .await?
+                .ok_or(RepositoryError::NotFound);
+        }
         let query = format!("update feedback_heart set assessment=?,review_request_id=?uuid,
             reviewed_at=coalesce(reviewed_at,?),
             stage=case when stage='review' then 'review_submitted' else stage end,
@@ -197,7 +222,7 @@ impl WorkItems {
         query_store!(
             self,
             "insert into feedback_heart(source_message_id)
-            select j.source_message_id from feedback_jobs j where j.publication_kind='create'
+            select j.source_message_id from feedback_jobs j where j.intake_version=0 and j.publication_kind='create'
             and j.status in ('published','done') and not exists(
               select 1 from feedback_heart h where h.source_message_id=j.source_message_id)
             order by j.source_message_id limit 10 on conflict(source_message_id) do nothing",
@@ -694,6 +719,7 @@ mod tests {
         );
         let request = Uuid::now_v7();
         let cmd = |note: &str| FeedbackReview {
+            task_id: None,
             assessment: note.into(),
             request_id: request,
         };

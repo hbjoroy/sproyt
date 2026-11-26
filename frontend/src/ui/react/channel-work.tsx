@@ -5,6 +5,8 @@ import { assignedTaskKey, type AssignedProcessTask, type ChannelProcess, type Ch
 import type { CircleProcess } from "../../circle-processes";
 import type { ProcessPilotApi } from "../../process-pilot";
 import type { WorkItemApi } from "../../work-items";
+import type { FeedbackPanel } from "../../feedback-issue";
+import { FeedbackIssueDialog } from "./feedback-issue";
 import { ProcessRow } from "./circle-processes";
 import processCss from "./circle-processes.css";
 import { ProcessTaskMessage } from "./process-pilot";
@@ -70,6 +72,36 @@ function usePagedList<T>(read: PageReader<T>, admitted: () => boolean, keyOf: (i
   return { ...page, loading, failure, load };
 }
 
+function OpenFeedback({ api, channelId, messageId, taskId, onCompleted }: {
+  api: WorkItemApi; channelId: string; messageId: string; taskId?: string; onCompleted?: () => void;
+}) {
+  const [panel, setPanel] = useState<FeedbackPanel | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const request = useRef<AbortController | null>(null);
+  useEffect(() => () => request.current?.abort(), []);
+  async function open() {
+    request.current?.abort();
+    const controller = new AbortController(); request.current = controller;
+    setLoading(true); setError("");
+    try {
+      const current = await api.feedbackPanel(channelId, messageId, controller.signal);
+      if (controller.signal.aborted) return;
+      if (taskId && current && ![current.intake?.clarification_task_id, current.intake?.review_task_id].includes(taskId)) {
+        setError("Denne oppgåva er ikkje lenger aktiv. Oppdater oppgåvelista.");
+      } else if (current) setPanel(current);
+      else setError("Fann ikkje tilbakemeldingsprosessen.");
+    } catch { if (!controller.signal.aborted) setError("Kunne ikkje hente tilbakemeldingsprosessen."); }
+    finally { if (!controller.signal.aborted) setLoading(false); }
+  }
+  return <>
+    <Button variant="quiet" disabled={loading} onClick={() => void open()}>{taskId ? "Opne oppgåva" : "Opne tilbakemeldinga"}</Button>
+    {error && <Status tone="error">{error}</Status>}
+    {panel && <FeedbackIssueDialog api={api} channelId={channelId} messageId={messageId} initialPanel={panel}
+      onClose={() => setPanel(null)} onCompleted={onCompleted} />}
+  </>;
+}
+
 function AssignedTaskRow({ item, personal, processPilot, workItems, onOpenChannel, onCompleted, retain }: {
   item: AssignedProcessTask; personal: boolean;
   processPilot: ProcessPilotApi; workItems: WorkItemApi;
@@ -95,10 +127,13 @@ function AssignedTaskRow({ item, personal, processPilot, workItems, onOpenChanne
   }}>
     <summary>
       <strong>{title}</strong>
+      {item.kind === "feedback" && item.task.source_excerpt && <small>{item.task.source_excerpt}</small>}
       {personal && <small>{origin}</small>}
     </summary>
     {opened && <div className="sp-channel-work-task-body">
-      {item.kind === "process_pilot"
+      {item.kind === "feedback"
+        ? <OpenFeedback api={workItems} channelId={item.channel_id} messageId={messageId} taskId={id} onCompleted={complete} />
+        : item.kind === "process_pilot"
         ? <ProcessTaskMessage api={processPilot} taskId={id} messageId={messageId} inline onCompleted={complete} onActionAttempt={() => retain(item)} />
         : <WorkItemTaskMessage api={workItems} taskId={id} messageId={messageId} inline onCompleted={complete} onActionAttempt={() => retain(item)} />}
       {personal && onOpenChannel && <Button variant="quiet" onClick={() => onOpenChannel(item.channel_id)}>
@@ -171,8 +206,8 @@ function Definition({ process }: { process: ChannelProcess }) {
   </div>;
 }
 
-function ChannelProcessRow({ api, owner, admitted, channelId, process, canOpenOrigin }: WorkScope & {
-  channelId: string; process: CircleProcess; canOpenOrigin?: ChannelWorkProps["canOpenOrigin"];
+function ChannelProcessRow({ api, owner, admitted, channelId, process, canOpenOrigin, workItems }: WorkScope & {
+  workItems: WorkItemApi; channelId: string; process: CircleProcess; canOpenOrigin?: ChannelWorkProps["canOpenOrigin"];
 }) {
   const [open, setOpen] = useState(false);
   const [detail, setDetail] = useState<ChannelProcess>();
@@ -196,14 +231,18 @@ function ChannelProcessRow({ api, owner, admitted, channelId, process, canOpenOr
   const definition = !open ? null : detail ? <Definition process={detail} />
     : failed ? <Status tone="error">Kunne ikkje hente prosessdetaljane. <Button variant="quiet" onClick={() => setRevision(value => value + 1)}>Prøv igjen</Button></Status>
     : <Status>Hentar prosessdetaljane …</Status>;
-  return <ProcessRow process={detail ?? process} definition={definition} onOpenChange={setOpen}
+  return <ProcessRow process={detail ?? process} definition={<>
+    {open && process.kind === "feedback" && process.id.startsWith("feedback:") && <OpenFeedback api={workItems}
+      channelId={channelId} messageId={process.id.slice("feedback:".length)} />}
+    {definition}
+  </>} onOpenChange={setOpen}
     canReadAssignee={id => id === channelId || Boolean(canOpenOrigin?.(id))} />;
 }
 
 const processKey = (process: CircleProcess) => process.id;
 
-function ChannelProcesses({ api, owner, channelId, admitted, all, setAll, canOpenOrigin }: WorkScope & {
-  channelId: string; all: boolean; setAll(value: boolean): void; canOpenOrigin?: ChannelWorkProps["canOpenOrigin"];
+function ChannelProcesses({ api, owner, channelId, admitted, all, setAll, canOpenOrigin, workItems }: WorkScope & {
+  workItems: WorkItemApi; channelId: string; all: boolean; setAll(value: boolean): void; canOpenOrigin?: ChannelWorkProps["canOpenOrigin"];
 }) {
   const read = useCallback<PageReader<CircleProcess>>(async (after, signal, live) => {
     const page = await api.processes(owner, channelId, all ? "all" : "open", after, signal, live);
@@ -222,7 +261,7 @@ function ChannelProcesses({ api, owner, channelId, admitted, all, setAll, canOpe
     {failure && <Status tone="error">Kunne ikkje hente prosessane. <Button variant="quiet" onClick={() => load(failure.after)}>Prøv igjen</Button></Status>}
     {!loading && !failure && !items.length && !cursor && <p>{all ? "Ingen prosessar er registrerte i kanalen." : "Ingen opne prosessar i kanalen."}</p>}
     {items.map(process => <ChannelProcessRow key={process.id} api={api} owner={owner} channelId={channelId} admitted={admitted}
-      process={process} canOpenOrigin={canOpenOrigin} />)}
+      process={process} canOpenOrigin={canOpenOrigin} workItems={workItems} />)}
     {cursor && !failure && <Button disabled={loading} onClick={() => load(cursor)}>Vis fleire prosessar</Button>}
   </section>;
 }
@@ -233,7 +272,7 @@ function ChannelWorkPane(props: ChannelWorkProps) {
   return <div className="sp-channel-work">
     <style>{css}</style><style>{processCss}</style>
     <AssignedTasks {...props} />
-    {channelId && <ChannelProcesses api={props.api} owner={props.owner} channelId={channelId}
+    {channelId && <ChannelProcesses api={props.api} workItems={props.workItems} owner={props.owner} channelId={channelId}
       admitted={props.admitted} all={all} setAll={setAll} canOpenOrigin={props.canOpenOrigin} />}
   </div>;
 }

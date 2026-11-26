@@ -303,3 +303,295 @@ async fn sqlite_feedback_worker_qualifies_links_reconciles_and_observes_closure(
     assert_eq!(observation, ("closed".into(), "not_planned".into(), false));
     server.abort();
 }
+
+#[tokio::test]
+async fn heart_intake_worker_executes_only_assigned_tasks_and_reconciles_lost_publication() {
+    let remote = Shared::default();
+    let heart = Arc::new(Mutex::new(Value::Null));
+    let heart_response = heart.clone();
+    let heart_tasks = heart.clone();
+    let mock = routes(remote.clone()).route("/api/v2/user-tasks",get(move || {
+        let view=heart_tasks.lock().unwrap().clone();
+        let active=&view["active_activations"][0];
+        let value=json!([{"id":active["id"],"node_id":active["node_id"],"instance_id":view["id"],
+            "assignee_id":view["input_metadata"]["agent_id"],"status":"pending"}]);
+        async move {Json(value)}
+    })).route(
+        "/api/v2/instances/{instance}",
+        get(move || {
+            let value = heart_response.lock().unwrap().clone();
+            async move { Json(value) }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, mock).await.unwrap() });
+    let mut f = Fixture::sqlite(false).await;
+    let agent = seed_feedback_route(&f).await;
+    let Store::Sqlite(pool) = &f.service.store else {
+        unreachable!()
+    };
+    let pool = pool.clone();
+    sqlx::query("update channels set circle_id=null,kind='public' where id=?")
+        .bind(f.channel.to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("update feedback_routes set intake_enabled=true where channel_id=?")
+        .bind(f.channel.to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+    f.service.github = Some(GitHub::test_client(base.clone()));
+    f.service.heart_url = Some(base.clone());
+    let h = Harness {
+        f,
+        agents: CircleChatAgents::feedback_test_client(pool.clone(), base),
+        pool,
+        chat: ChatEngine::start(Arc::new(InMemoryChatRepository::default())),
+    };
+    let source = h.source(REQUEST).await;
+    h.tick(source, "pending").await;
+    assert_eq!(
+        remote.lock().unwrap().model_calls,
+        0,
+        "admission alone cannot call the model"
+    );
+    let instance = Uuid::now_v7();
+    let definition = Uuid::now_v7();
+    sqlx::query(
+        "insert into feedback_intakes(source_message_id,instance_id,definition_id) values(?,?,?)",
+    )
+    .bind(source.to_string())
+    .bind(instance.to_string())
+    .bind(definition.to_string())
+    .execute(&h.pool)
+    .await
+    .unwrap();
+
+    for (node, expected) in [
+        ("qualify", "qualified"),
+        ("match", "create"),
+        ("create", "published"),
+        ("ack", "created"),
+    ] {
+        let task = Uuid::now_v7();
+        sqlx::query("update feedback_intakes set stage=?,task_id=? where source_message_id=?")
+            .bind(node)
+            .bind(task.to_string())
+            .bind(source.to_string())
+            .execute(&h.pool)
+            .await
+            .unwrap();
+        let view = json!({"id":instance,"runtime":"v2","status":"waiting","namespace":"sproyt","definition_id":definition,
+            "input_metadata":{"reviewer_id":h.f.reviewer,"agent_id":agent,"channel_id":h.f.channel,"source_message_id":source},
+            "active_activations":[{"instance_id":instance,"id":task,"node_id":node,"status":"waiting"}]});
+        if node == "create" {
+            // An outdated local projection must never authorize an external write.
+            h.tick(source, "pending").await;
+            assert_eq!(remote.lock().unwrap().creations, 0);
+        }
+        *heart.lock().unwrap() = view;
+        match node {
+            "qualify" | "match" => {
+                h.tick(source, "pending").await;
+                assert_eq!(remote.lock().unwrap().creations, 0);
+            }
+            "create" => {
+                h.tick(source, "uncertain").await;
+                h.tick(source, "published").await;
+                h.tick(source, "published").await;
+            }
+            "ack" => {
+                h.tick(source, "done").await;
+                h.tick(source, "done").await;
+            }
+            _ => unreachable!(),
+        }
+        let result: String =
+            sqlx::query_scalar("select result_json from feedback_intake_results where task_id=?")
+                .bind(task.to_string())
+                .fetch_one(&h.pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&result).unwrap()["outcome"],
+            expected
+        );
+    }
+    assert_eq!(remote.lock().unwrap().creations, 1);
+    let (reactions, replies): (i64, i64) = sqlx::query_as(
+        "select (select count(*) from message_reactions where message_id=?),
+        (select count(*) from messages where parent_message_id=?)",
+    )
+    .bind(source.to_string())
+    .bind(source.to_string())
+    .fetch_one(&h.pool)
+    .await
+    .unwrap();
+    assert_eq!((reactions, replies), (1, 1));
+    server.abort();
+}
+
+async fn drive_intake_to(h: &Harness, source: Uuid, expected: &str) {
+    // Advance only the retry clocks; both production drivers and all stage and
+    // task decisions go through the real engine and the normal service paths.
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(45);
+    loop {
+        sqlx::query("update feedback_jobs set available_at=0 where source_message_id=? and lease_token is null")
+            .bind(source.to_string()).execute(&h.pool).await.unwrap();
+        sqlx::query("update feedback_intakes set due_at=0 where source_message_id=? and lease_token is null")
+            .bind(source.to_string()).execute(&h.pool).await.unwrap();
+        h.f.service.admit_feedback().await.unwrap();
+        h.f.service
+            .sync_feedback_intakes(Utc::now().timestamp())
+            .await
+            .unwrap();
+        h.f.service.feedback_tick(&h.agents, &h.chat).await.unwrap();
+        let stage: Option<String> =
+            sqlx::query_scalar("select stage from feedback_intakes where source_message_id=?")
+                .bind(source.to_string())
+                .fetch_optional(&h.pool)
+                .await
+                .unwrap();
+        if stage.as_deref() == Some(expected) {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "expected {expected}, observed {stage:?}"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(90)).await;
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires an isolated Heart v2 at SPROYT_HEART_INTAKE_TEST_URL"]
+async fn real_heart_drives_intake_worker_and_owner_end_to_end() {
+    let heart = std::env::var("SPROYT_HEART_INTAKE_TEST_URL").unwrap();
+    let host = reqwest::Url::parse(&heart).unwrap();
+    assert!(
+        matches!(host.host_str(), Some("127.0.0.1" | "localhost" | "[::1]")),
+        "expected a local isolated Heart"
+    );
+    let remote = Shared::default();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let mock = routes(remote.clone());
+    let server = tokio::spawn(async move { axum::serve(listener, mock).await.unwrap() });
+    let mut f = Fixture::sqlite(false).await;
+    seed_feedback_route(&f).await;
+    let Store::Sqlite(pool) = &f.service.store else {
+        unreachable!()
+    };
+    let pool = pool.clone();
+    sqlx::query("update channels set circle_id=null,kind='public' where id=?")
+        .bind(f.channel.to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("update feedback_routes set intake_enabled=true where channel_id=?")
+        .bind(f.channel.to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+    f.service.heart_url = Some(heart);
+    f.service.github = Some(GitHub::test_client(base.clone()));
+    let h = Harness {
+        f,
+        agents: CircleChatAgents::feedback_test_client(pool.clone(), base),
+        pool,
+        chat: ChatEngine::start(Arc::new(InMemoryChatRepository::default())),
+    };
+    let reviewer = || UserId::from_uuid(h.f.reviewer);
+    let source = h.source(REQUEST).await;
+    drive_intake_to(&h, source, "review").await;
+    let original =
+        h.f.service
+            .feedback_intake(reviewer(), h.f.channel, source)
+            .await
+            .unwrap()
+            .unwrap();
+    assert!(original.can_review);
+    assert_eq!(
+        remote.lock().unwrap().creations,
+        1,
+        "uncertain publication must reconcile rather than repost"
+    );
+    h.f.service
+        .review_feedback(
+            reviewer(),
+            h.f.channel,
+            source,
+            FeedbackReview {
+                assessment: "Reviewed by the product owner in the integration test".into(),
+                request_id: Uuid::now_v7(),
+                task_id: Some(
+                    Uuid::parse_str(original.review_task_id.as_deref().unwrap()).unwrap(),
+                ),
+            },
+        )
+        .await
+        .unwrap();
+    drive_intake_to(&h, source, "await-github").await;
+    {
+        let mut state = remote.lock().unwrap();
+        let issue = state.issue.as_mut().unwrap();
+        issue["status"] = json!({"category":"started","name":"In progress"});
+    }
+    let clarification = h.source(UNCLEAR).await;
+    drive_intake_to(&h, clarification, "clarify").await;
+    let pending =
+        h.f.service
+            .feedback_intake(reviewer(), h.f.channel, clarification)
+            .await
+            .unwrap()
+            .unwrap();
+    assert!(pending.can_clarify);
+    assert_ne!(pending.heart_instance_id, original.heart_instance_id);
+    let command = || {
+        serde_json::from_value(json!({"task_id":pending.clarification_task_id,"decision":"dismiss","note":"The owner chose to finish without publication."})).unwrap()
+    };
+    assert!(
+        h.f.service
+            .clarify_feedback(
+                UserId::from_uuid(h.f.outsider),
+                h.f.channel,
+                clarification,
+                command()
+            )
+            .await
+            .is_err()
+    );
+    h.f.service
+        .clarify_feedback(reviewer(), h.f.channel, clarification, command())
+        .await
+        .unwrap();
+    drive_intake_to(&h, clarification, "ignored").await;
+    assert_eq!(remote.lock().unwrap().creations, 1);
+    {
+        let mut state = remote.lock().unwrap();
+        let issue = state.issue.as_mut().unwrap();
+        issue["state"] = json!("closed");
+        issue["state_reason"] = json!("completed");
+    }
+    h.f.service.wake_feedback_issue(7, 42, 700).await.unwrap();
+    drive_intake_to(&h, source, "resolved").await;
+    let closed =
+        h.f.service
+            .feedback_intake(reviewer(), h.f.channel, source)
+            .await
+            .unwrap()
+            .unwrap();
+    assert_eq!(closed.heart_instance_id, original.heart_instance_id);
+    h.linked(source, "create").await;
+    let legacy: i64 = sqlx::query_scalar("select count(*) from feedback_heart")
+        .fetch_one(&h.pool)
+        .await
+        .unwrap();
+    assert_eq!(legacy, 0);
+    server.abort();
+}
+
+#[path = "worker_postgres_tests.rs"]
+mod postgres;

@@ -56,3 +56,53 @@ export function decodeFeedbackActivation(value: unknown): FeedbackActivation | n
   if (typeof value === "string" && Object.hasOwn(activationLabels, value)) return value as FeedbackActivation;
   throw new Error("Kunne ikkje lese status for tilbakemeldinga.");
 }
+
+export const intakeStage = {
+  starting: "Startar tilbakemeldingsprosessen",
+  qualify: "Vurderer om meldinga skal til GitHub",
+  match: "Samanliknar med opne saker",
+  clarify: "Til manuell avklaring",
+  "clarify-publication": "Avklar endra grunnlag for publisering",
+  "final-clarify": "Avklar avslutting etter endringar i GitHub",
+  "retry-create": "Opprettar avklara GitHub-sak",
+  "retry-comment": "Publiserer avklara kommentar",
+  "retry-link": "Knyter til avklara GitHub-sak",
+  create: "Opprettar ny GitHub-sak",
+  comment: "Legg til kommentar i GitHub",
+  link: "Knyter til eksisterande sak",
+  ack: "Kvitterer i tråden",
+  review: feedbackStage.review,
+  "await-github": feedbackStage.waiting_for_close,
+  ignored: "Avslutta utan GitHub-sak",
+  linked: feedbackStage.linked,
+  resolved: feedbackStage.resolved,
+  rejected: feedbackStage.rejected,
+  failed: feedbackStage.failed,
+} as const;
+
+export type FeedbackIntake = Readonly<{
+  stage: keyof typeof intakeStage; source_body: string; heart_instance_id: string | null;
+  clarification_task_id: string | null; review_task_id: string | null;
+  reason: string | null; candidates: readonly Readonly<{ number: number; title: string }>[];
+  can_clarify: boolean; can_review: boolean; dismiss_only?: boolean;
+}>;
+
+export type Clarification = Readonly<{
+  task_id: string; decision: "create" | "existing" | "dismiss"; issue_number: number | null; note: string;
+}>;
+
+export type FeedbackPanel = Readonly<{ issue: FeedbackIssue | null; intake: FeedbackIntake | null }>;
+
+export function decodeFeedbackIntake(value: unknown): FeedbackIntake {
+  if (!isRecord(value) || typeof value.stage !== "string" || !Object.hasOwn(intakeStage, value.stage)
+    || typeof value.source_body !== "string" || typeof value.can_clarify !== "boolean" || typeof value.can_review !== "boolean"
+    || ![value.heart_instance_id, value.clarification_task_id, value.review_task_id, value.reason].every(field => field === null || typeof field === "string")
+    || (value.dismiss_only !== undefined && typeof value.dismiss_only !== "boolean")
+    || (value.can_clarify && (!value.clarification_task_id || !["clarify", "clarify-publication", "final-clarify"].includes(value.stage)))
+    || (value.can_review && (!value.review_task_id || value.stage !== "review"))
+    || !Array.isArray(value.candidates) || !value.candidates.every(candidate => isRecord(candidate) && typeof candidate.title === "string"
+      && typeof candidate.number === "number" && Number.isSafeInteger(candidate.number) && candidate.number > 0)) {
+    throw new Error("Kunne ikkje lese tilbakemeldingsprosessen.");
+  }
+  return value as FeedbackIntake;
+}

@@ -1,4 +1,4 @@
--- PostgreSQL 17+, psql. Run on the Sprøyt database after migrations 0080/0081.
+-- PostgreSQL 17+, psql. Run on the Sprøyt database after migration 0082.
 -- Preview: psql -X -f tools/configure-felles-feedback.sql
 -- Start:   psql -X -v apply=on -f tools/configure-felles-feedback.sql
 -- Stop:    psql -X -v stop=on -v apply=on -f tools/configure-felles-feedback.sql
@@ -108,6 +108,13 @@ begin
     insert into feedback_routes(channel_id,agent_id,reviewer_id,application_id,enabled,after_sequence)
     values(target.id,bot,handler.id,app.id,true,boundary)
     on conflict(channel_id) do update set enabled=true,after_sequence=excluded.after_sequence where not feedback_routes.enabled;
+    -- Run the cutover only after all production workers understand intake_version.
+    -- A job which might have published always finishes on its original workflow.
+    update feedback_routes set intake_enabled=true where channel_id=target.id;
+    update feedback_jobs j set intake_version=1,intake_clarification_needed=(j.status='needs_review'),status='pending',attempts=0,available_at=0
+      where j.channel_id=target.id and j.intake_version=0 and j.status in ('pending','needs_review')
+      and j.lease_token is null and j.issue_id is null and j.publication_kind is null
+      and not exists(select 1 from feedback_heart h where h.source_message_id=j.source_message_id);
     select * into strict route from feedback_routes where channel_id=target.id;
     raise notice 'Channel % (%) | agent % | reviewer % (%) | repository % (%) | first eligible sequence %',
         target.name,target.id,bot,handler.display_name,handler.id,binding.repository_name,binding.repository_id,route.after_sequence+1;

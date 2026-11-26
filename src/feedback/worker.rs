@@ -2,6 +2,7 @@ use super::{
     feedback_channel::{PINNED_JOB, SOURCE_AUTHORITY},
     *,
 };
+
 use crate::{
     chatbot::{CircleChatAgents, feedback::Decision},
     github::{CreateError, Destination, Issue},
@@ -28,12 +29,18 @@ macro_rules! change {
     }};
 }
 
+#[path = "worker_intake.rs"]
+mod intake;
+
 #[derive(sqlx::FromRow)]
 struct Job {
     source: String,
     status: String,
     source_body: String,
     attempts: i64,
+    intake_version: i32,
+    intake_clarification_needed: bool,
+    publication_kind: Option<String>,
     installation_id: i64,
     repository_id: i64,
     repository_name: String,
@@ -120,25 +127,39 @@ impl WorkItems {
         let now = Utc::now().timestamp();
         // Serialise new decisions for this repository across replicas. An uncertain
         // write must reconcile before another message can create a competing issue.
+        let linked_status_due = "(j.publication_kind<>'create' and j.github_state='open' and
+            not exists(select 1 from feedback_jobs base where base.repository_id=j.repository_id and
+            base.issue_id=j.issue_id and base.status in ('published','done') and
+            (base.publication_kind='create' or base.source_message_id<j.source_message_id)))";
+        let heart_ready = format!("(j.intake_version=0 or exists (
+            select 1 from feedback_intakes ended where ended.source_message_id=j.source_message_id and ended.stage='linked'
+                and j.status='done' and (j.github_checked_at=0 or {linked_status_due}))
+            or exists (
+            select 1 from feedback_intakes i where i.source_message_id=j.source_message_id and i.task_id is not null
+            and ((i.stage in ('qualify','match','create','comment','link','retry-create','retry-comment','retry-link','ack') and
+                not exists(select 1 from feedback_intake_results x where x.task_id=i.task_id))
+              or (i.stage in ('review','await-github') and j.status='done'))))");
         let ready = "j.status<>'pending' or (
             exists(select 1 from feedback_routes route where route.channel_id=j.channel_id and route.enabled)
             and not exists(select 1 from feedback_jobs p where p.repository_id=j.repository_id
                 and p.source_message_id<>j.source_message_id and (p.status in ('sending','uncertain')
-                or (p.status='pending' and (case when p.lease_token is null then 1 else 0 end,p.source_sequence,p.source_message_id)
-                    <(case when j.lease_token is null then 1 else 0 end,j.source_sequence,j.source_message_id)))))";
+                or (p.status='pending' and (p.lease_token is not null or p.available_at<=?)
+                    and exists(select 1 from feedback_routes enabled_route where enabled_route.channel_id=p.channel_id and enabled_route.enabled) and
+                    (p.intake_version=0 or exists (select 1 from feedback_intakes f where
+                        f.source_message_id=p.source_message_id and f.stage in ('qualify','match','create','comment','link','retry-create','retry-comment','retry-link')))
+                    and (case when p.lease_token is not null then 0 when p.publication_kind is not null then 1 else 2 end,p.source_sequence,p.source_message_id)
+                    <(case when j.lease_token is not null then 0 when j.publication_kind is not null then 1 else 2 end,j.source_sequence,j.source_message_id)))))";
         let next=format!("select cast(j.source_message_id as text) from feedback_jobs j
-            where j.status in ('pending','sending','uncertain','published','done') and j.available_at<=? and ({ready})
-            and (j.status<>'done' or j.github_checked_at=0 or
+            where j.status in ('pending','sending','uncertain','published','done') and j.available_at<=? and ({ready}) and {heart_ready}
+            and (j.status<>'done' or j.intake_version=1 or j.github_checked_at=0 or
                 (j.publication_kind='create' and not exists(select 1 from feedback_heart h
                     where h.source_message_id=j.source_message_id and h.stage in ('resolved','rejected','failed'))) or
-                (j.publication_kind<>'create' and j.github_state='open' and not exists(select 1 from feedback_jobs base
-                    where base.repository_id=j.repository_id and base.issue_id=j.issue_id and base.status in ('published','done')
-                    and (base.publication_kind='create' or base.source_message_id<j.source_message_id))))
+                {linked_status_due})
             order by j.available_at,j.source_sequence,j.source_message_id limit 8");
         let ids = run_query!(
             self,
             &next,
-            [now],
+            [now, now],
             sqlx::query_scalar::<_, String>,
             fetch_all
         )?;
@@ -146,8 +167,8 @@ impl WorkItems {
             let lease = Uuid::now_v7().to_string();
             let now = Utc::now().timestamp();
             let claim=format!("update feedback_jobs as j set available_at=?,lease_token=?uuid,attempts=attempts+case when status='pending' then 1 else 0 end
-                where source_message_id=?uuid and available_at<=? and status in ('pending','sending','uncertain','published','done') and ({ready})
-                returning cast(source_message_id as text) as source,status,source_body,attempts,installation_id,repository_id,
+                where source_message_id=?uuid and available_at<=? and status in ('pending','sending','uncertain','published','done') and ({ready}) and {heart_ready}
+                returning cast(source_message_id as text) as source,status,source_body,attempts,cast(intake_version as integer) as intake_version,intake_clarification_needed,publication_kind,installation_id,repository_id,
                     repository_name,bot_login,published_title,published_body,issue_number,issue_id");
             macro_rules! claim_job {
                 ($executor:expr,$pg:expr) => {
@@ -155,6 +176,7 @@ impl WorkItems {
                         .bind(now + 600)
                         .bind(&lease)
                         .bind(&source)
+                        .bind(now)
                         .bind(now)
                         .fetch_optional($executor)
                         .await
@@ -183,11 +205,16 @@ impl WorkItems {
             let Some(job) = claimed else {
                 continue;
             };
-            let delay = match self.handle_feedback(&job, &lease, agents, chat).await {
+            let handled = if job.intake_version == 1 {
+                self.handle_intake_task(&job, &lease, agents, chat).await
+            } else {
+                self.handle_feedback(&job, &lease, agents, chat).await
+            };
+            let delay = match handled {
                 Ok(delay) => delay,
                 Err(error) => {
                     tracing::warn!(source=%source,error_kind=error.kind(),"feedback job deferred");
-                    if job.attempts >= 5 {
+                    if job.intake_version == 0 && job.attempts >= 5 {
                         change!(
                             self,
                             "update feedback_jobs set status='needs_review' where source_message_id=?uuid and lease_token=?uuid and status='pending'",
@@ -280,73 +307,12 @@ impl WorkItems {
         github.verify(&target, &token).await.map_err(storage)?;
         match job.status.as_str() {
             "sending" | "uncertain" => {
-                let marker = job.marker();
-                let text = format!(
-                    "{}\n\n{marker}",
-                    job.published_body
-                        .as_deref()
-                        .ok_or(RepositoryError::Conflict)?
-                );
-                let issue = if let Some(number) = job.issue_number {
-                    github
-                        .find_feedback_comment(&target, &token, number, &marker, &text)
-                        .await
-                } else {
-                    github
-                        .find(
-                            &target,
-                            &token,
-                            &marker,
-                            job.published_title
-                                .as_deref()
-                                .ok_or(RepositoryError::Conflict)?,
-                            &text,
-                        )
-                        .await
-                }
-                .map_err(storage)?;
-                if let Some(issue) = issue {
-                    if job.published_title.is_some() {
-                        let snapshot = github
-                            .feedback_status(&target, &token, issue.number)
-                            .await
-                            .map_err(storage)?;
-                        if snapshot.issue.id != issue.id {
-                            return Err(RepositoryError::Conflict);
-                        }
-                        if !snapshot.proposed && snapshot.state == "open" {
-                            change!(
-                                self,
-                                "update feedback_jobs set status='needs_review',issue_id=?,issue_number=?,issue_url=? where source_message_id=?uuid and lease_token=?uuid",
-                                [issue.id, issue.number, &issue.url, &job.source, lease]
-                            );
-                            return Ok(0);
-                        }
-                    }
-                    self.feedback_published(job, lease, &issue).await?;
-                    return Ok(0);
-                }
-                self.feedback_state(job, lease, "uncertain").await?;
-                Ok(300)
+                self.reconcile_feedback(job, lease, github, &target, &token)
+                    .await
             }
             "done" | "published" => {
-                let checked_at = Utc::now().timestamp();
-                let snapshot = github
-                    .feedback_status(
-                        &target,
-                        &token,
-                        job.issue_number.ok_or(RepositoryError::Conflict)?,
-                    )
+                self.observe_feedback(job, lease, github, &target, &token)
                     .await
-                    .map_err(storage)?;
-                if Some(snapshot.issue.id) != job.issue_id {
-                    return Err(RepositoryError::Conflict);
-                }
-                change!(self,"update feedback_jobs set github_state=?,github_state_reason=?,github_proposed=?,github_status_name=?,github_checked_at=?
-                    where repository_id=? and issue_id=? and github_checked_at<=? and exists(select 1 from feedback_jobs owner_job
-                    where owner_job.source_message_id=?uuid and owner_job.lease_token=?uuid)",
-                    [&snapshot.state,snapshot.reason.as_deref(),snapshot.proposed,snapshot.status_name.as_deref(),checked_at,job.repository_id,snapshot.issue.id,checked_at,&job.source,lease]);
-                Ok(120)
             }
             "pending" => {
                 match self.feedback_draft(job, agents, &target, &token).await? {
@@ -429,6 +395,94 @@ impl WorkItems {
         }
     }
 
+    async fn reconcile_feedback(
+        &self,
+        job: &Job,
+        lease: &str,
+        github: &crate::github::GitHub,
+        target: &Destination,
+        token: &str,
+    ) -> Result<i64> {
+        let marker = job.marker();
+        let text = format!(
+            "{}\n\n{marker}",
+            job.published_body
+                .as_deref()
+                .ok_or(RepositoryError::Conflict)?
+        );
+        let issue = if let Some(number) = job.issue_number {
+            github
+                .find_feedback_comment(target, token, number, &marker, &text)
+                .await
+        } else {
+            github
+                .find(
+                    target,
+                    token,
+                    &marker,
+                    job.published_title
+                        .as_deref()
+                        .ok_or(RepositoryError::Conflict)?,
+                    &text,
+                )
+                .await
+        }
+        .map_err(storage)?;
+        if let Some(issue) = issue {
+            if job.published_title.is_some() {
+                let snapshot = github
+                    .feedback_status(target, token, issue.number)
+                    .await
+                    .map_err(storage)?;
+                if snapshot.issue.id != issue.id {
+                    return Err(RepositoryError::Conflict);
+                }
+                if !snapshot.proposed && snapshot.state == "open" {
+                    // This is an extant issue. Do not route to a new write even if
+                    // GitHub lost the Backlog status after accepting it.
+                    if job.intake_version == 1 {
+                        return Ok(120);
+                    }
+                    change!(
+                        self,
+                        "update feedback_jobs set status='needs_review',issue_id=?,issue_number=?,issue_url=? where source_message_id=?uuid and lease_token=?uuid",
+                        [issue.id, issue.number, &issue.url, &job.source, lease]
+                    );
+                    return Ok(0);
+                }
+            }
+            self.feedback_published(job, lease, &issue).await?;
+            return Ok(0);
+        }
+        self.feedback_state(job, lease, "uncertain").await?;
+        Ok(300)
+    }
+    async fn observe_feedback(
+        &self,
+        job: &Job,
+        lease: &str,
+        github: &crate::github::GitHub,
+        target: &Destination,
+        token: &str,
+    ) -> Result<i64> {
+        let checked_at = Utc::now().timestamp();
+        let snapshot = github
+            .feedback_status(
+                target,
+                token,
+                job.issue_number.ok_or(RepositoryError::Conflict)?,
+            )
+            .await
+            .map_err(storage)?;
+        if Some(snapshot.issue.id) != job.issue_id {
+            return Err(RepositoryError::Conflict);
+        }
+        change!(self,"update feedback_jobs set github_state=?,github_state_reason=?,github_proposed=?,github_status_name=?,github_checked_at=?
+                    where repository_id=? and issue_id=? and github_checked_at<=? and exists(select 1 from feedback_jobs owner_job
+                    where owner_job.source_message_id=?uuid and owner_job.lease_token=?uuid)",
+                    [&snapshot.state,snapshot.reason.as_deref(),snapshot.proposed,snapshot.status_name.as_deref(),checked_at,job.repository_id,snapshot.issue.id,checked_at,&job.source,lease]);
+        Ok(120)
+    }
     async fn feedback_draft(
         &self,
         job: &Job,
@@ -444,11 +498,24 @@ impl WorkItems {
         else {
             return Ok(Outcome::Review);
         };
-        match agents
+        let decision = agents
             .draft_feedback(&job.source_body, &options)
             .await
-            .map_err(storage)?
-        {
+            .map_err(storage)?;
+        self.prepare_feedback_draft(job, agents, target, token, decision, &options)
+            .await
+    }
+    async fn prepare_feedback_draft(
+        &self,
+        job: &Job,
+        agents: &CircleChatAgents,
+        target: &Destination,
+        token: &str,
+        decision: Decision,
+        options: &[crate::github::feedback::Candidate],
+    ) -> Result<Outcome> {
+        let github = self.github.as_ref().ok_or(RepositoryError::Conflict)?;
+        match decision {
             Decision::New {
                 title,
                 need,

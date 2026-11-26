@@ -2,8 +2,10 @@ import { Button, Status } from "@sproyt/ui/react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { CircleProcess, CircleProcessApi, ProcessStep } from "../../circle-processes";
 import css from "./circle-processes.css";
+import { intakeStage } from "../../feedback-issue";
 
 const statuses: Readonly<Record<string, string>> = {
+  ...intakeStage,
   starting: "Startar", pending: "Ventande", leased: "Under arbeid", active: "Under arbeid", waiting: "Ventar på svar",
   running: "Under arbeid", completed: "Fullført", cancelled: "Avbroten", canceled: "Avbroten", terminated: "Avslutta",
   failed: "Treng oppfølging", blocked: "Blokkert", ready: "Klar", skipped: "Hoppa over", sending: "Sender",

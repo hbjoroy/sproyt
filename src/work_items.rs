@@ -20,8 +20,13 @@ use uuid::Uuid;
 #[path = "feedback/heart.rs"]
 mod feedback_heart;
 pub(crate) use feedback_heart::FeedbackReview;
+#[path = "feedback/intake_actions.rs"]
+mod intake_actions;
+pub(crate) use intake_actions::FeedbackClarification;
 #[path = "feedback/channel.rs"]
 mod feedback_channel;
+#[path = "feedback/intake_heart.rs"]
+mod feedback_intake_heart;
 #[path = "feedback/worker.rs"]
 mod feedback_worker;
 mod github_export;
@@ -254,6 +259,14 @@ impl WorkItems {
                     tracing::warn!(
                         error_kind = error.kind(),
                         "work item Heart synchronization deferred"
+                    );
+                }
+                if feedback_enabled
+                    && let Err(error) = service.sync_feedback_intakes(Utc::now().timestamp()).await
+                {
+                    tracing::warn!(
+                        error_kind = error.kind(),
+                        "feedback intake Heart synchronization deferred"
                     );
                 }
                 if feedback_enabled

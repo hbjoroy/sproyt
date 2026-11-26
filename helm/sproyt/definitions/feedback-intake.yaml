@@ -1,0 +1,177 @@
+namespace: sproyt
+name: feedback-intake
+version: '1.0.0'
+runtime: v2
+description: Ei melding i Felles, frå første vurdering til publisering og oppfølging.
+nodes:
+  start:
+    type: start
+    next: qualify
+  qualify:
+    type: user-task
+    description: Vurder om meldinga inneheld ei sak.
+    assignee_metadata_key: agent_id
+    next: after-qualify
+  after-qualify:
+    type: gate
+    conditions:
+      - when: return results["qualify"].value.outcome == "qualified"
+        next: match
+      - when: return results["qualify"].value.outcome == "ignored"
+        next: ignored
+    default: clarify
+  match:
+    type: user-task
+    description: Samanlikn meldinga med opne saker som ikkje er påbegynte.
+    assignee_metadata_key: agent_id
+    next: after-match
+  after-match:
+    type: gate
+    conditions:
+      - when: return results["match"].value.outcome == "create"
+        next: create
+      - when: return results["match"].value.outcome == "comment"
+        next: comment
+      - when: return results["match"].value.outcome == "link"
+        next: link
+    default: clarify
+  clarify:
+    type: user-task
+    description: Avklar om meldinga skal bli ei ny sak, knytast til ei eksisterande sak eller avsluttast.
+    assignee_metadata_key: reviewer_id
+    next: after-clarify
+  after-clarify:
+    type: gate
+    conditions:
+      - when: return results["clarify"].value.outcome == "create"
+        next: create
+      - when: return results["clarify"].value.outcome == "comment"
+        next: comment
+      - when: return results["clarify"].value.outcome == "link"
+        next: link
+    default: ignored
+  create:
+    type: user-task
+    description: Opprett ei føreslått sak i GitHub.
+    assignee_metadata_key: agent_id
+    next: after-create
+  after-create:
+    type: gate
+    conditions:
+      - when: return results["create"].value.outcome == "published"
+        next: ack
+    default: clarify-publication
+  comment:
+    type: user-task
+    description: Legg til det meldinga tilfører i GitHub.
+    assignee_metadata_key: agent_id
+    next: after-comment
+  after-comment:
+    type: gate
+    conditions:
+      - when: return results["comment"].value.outcome == "published"
+        next: ack
+    default: clarify-publication
+  link:
+    type: user-task
+    description: Knyt meldinga til ei sak der innhaldet er dekt.
+    assignee_metadata_key: agent_id
+    next: after-link
+  after-link:
+    type: gate
+    conditions:
+      - when: return results["link"].value.outcome == "published"
+        next: ack
+    default: clarify-publication
+  clarify-publication:
+    type: user-task
+    description: Publiseringsgrunnlaget har endra seg. Vel korleis meldinga skal behandlast.
+    assignee_metadata_key: reviewer_id
+    next: after-clarify-publication
+  after-clarify-publication:
+    type: gate
+    conditions:
+      - when: return results["clarify-publication"].value.outcome == "create"
+        next: retry-create
+      - when: return results["clarify-publication"].value.outcome == "comment"
+        next: retry-comment
+      - when: return results["clarify-publication"].value.outcome == "link"
+        next: retry-link
+    default: ignored
+  retry-create:
+    type: user-task
+    description: Opprett den avklarte saka.
+    assignee_metadata_key: agent_id
+    next: after-retry-create
+  after-retry-create:
+    type: gate
+    conditions:
+      - when: return results["retry-create"].value.outcome == "published"
+        next: ack
+    default: final-clarify
+  retry-comment:
+    type: user-task
+    description: Publiser det avklarte tillegget.
+    assignee_metadata_key: agent_id
+    next: after-retry-comment
+  after-retry-comment:
+    type: gate
+    conditions:
+      - when: return results["retry-comment"].value.outcome == "published"
+        next: ack
+    default: final-clarify
+  retry-link:
+    type: user-task
+    description: Knyt meldinga til den avklarte saka.
+    assignee_metadata_key: agent_id
+    next: after-retry-link
+  after-retry-link:
+    type: gate
+    conditions:
+      - when: return results["retry-link"].value.outcome == "published"
+        next: ack
+    default: final-clarify
+  final-clarify:
+    type: user-task
+    description: Avklar meldinga som ikkje kunne publiserast etter ny kontroll.
+    assignee_metadata_key: reviewer_id
+    next: ignored
+  ack:
+    type: user-task
+    description: Kvitter med reaksjon og lenkje til GitHub-saka i tråden.
+    assignee_metadata_key: agent_id
+    next: after-ack
+  after-ack:
+    type: gate
+    conditions:
+      - when: return results["ack"].value.outcome == "created"
+        next: review
+    default: linked
+  review:
+    type: user-task
+    description: Vurder den nye GitHub-saka.
+    assignee_metadata_key: reviewer_id
+    next: await-github
+  await-github:
+    type: user-task
+    description: Vent på stadfesta lukking i GitHub etter produkteigarvurderinga.
+    assignee_metadata_key: agent_id
+    next: after-await-github
+  after-await-github:
+    type: gate
+    conditions:
+      - when: return results["await-github"].value.outcome == "resolved"
+        next: resolved
+    default: rejected
+  ignored:
+    type: end
+    description: Avslutta utan GitHub-sak.
+  linked:
+    type: end
+    description: Knytt til ei eksisterande GitHub-sak.
+  resolved:
+    type: end
+    description: Løyst.
+  rejected:
+    type: end
+    description: Avvist.

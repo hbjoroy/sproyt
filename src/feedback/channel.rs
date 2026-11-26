@@ -37,9 +37,9 @@ pub(super) const PINNED_JOB: &str = "
     and j.installation_id=b.installation_id and j.repository_name=b.repository_name and j.bot_login=b.bot_login";
 
 const ADMIT: &str = "insert into feedback_jobs(source_message_id,channel_id,source_sequence,source_body,agent_id,
-                reviewer_id,application_id,binding_revision,repository_id,installation_id,repository_name,bot_login)
+                reviewer_id,application_id,binding_revision,repository_id,installation_id,repository_name,bot_login,intake_version)
             select m.id,c.id,m.sequence,m.body,r.agent_id,r.reviewer_id,r.application_id,
-                b.revision,b.repository_id,b.installation_id,b.repository_name,b.bot_login";
+                b.revision,b.repository_id,b.installation_id,b.repository_name,b.bot_login,case when r.intake_enabled then 1 else 0 end";
 
 const ACTIVATE_SOURCE: &str =
     "m.id=?uuid and c.id=?uuid and r.reviewer_id=?uuid and m.sequence<=r.after_sequence";

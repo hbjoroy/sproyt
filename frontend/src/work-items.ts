@@ -1,6 +1,6 @@
 import { HttpClient, HttpError } from "./api";
 import { isRecord } from "./types";
-import { decodeFeedbackActivation, decodeFeedbackIssue, feedbackIssuePath, type FeedbackIssue } from "./feedback-issue";
+import { decodeFeedbackActivation, decodeFeedbackIntake, decodeFeedbackIssue, feedbackIssuePath, type Clarification, type FeedbackIssue, type FeedbackPanel } from "./feedback-issue";
 
 export type WorkApplication = Readonly<{ id: string; key: string; name: string }>;
 export type WorkItemDraft = Readonly<{ source_body: string; title: string; suggested_by_model: boolean }>;
@@ -157,6 +157,24 @@ export class WorkItemApi {
     return issue;
   }
 
+  async feedbackPanel(channelId: string, messageId: string, signal?: AbortSignal): Promise<FeedbackPanel | null> {
+    const owner = this.identity();
+    const [issue, intake] = await Promise.all([
+      this.feedbackIssue(channelId, messageId, signal),
+      this.http.json(feedbackIssuePath(channelId, messageId) + "/intake", value => value === null ? null : decodeFeedbackIntake(value),
+        { signal, headers: { "x-sproyt-account": owner } }, () => this.identity() === owner),
+    ]);
+    return issue || intake ? { issue, intake } : null;
+  }
+
+  clarifyFeedback(channelId: string, messageId: string, body: Clarification) {
+    const owner = this.identity();
+    return this.http.json(feedbackIssuePath(channelId, messageId) + "/intake/clarification", decodeFeedbackIntake, {
+      method: "POST", headers: { "Content-Type": "application/json", "x-sproyt-account": owner },
+      body: JSON.stringify(body),
+    }, () => this.identity() === owner);
+  }
+
   feedbackActivation(channelId: string, messageId: string, activate: boolean, signal?: AbortSignal) {
     const owner = this.identity();
     return this.http.json(feedbackIssuePath(channelId, messageId) + "/activation", decodeFeedbackActivation, {
@@ -170,7 +188,7 @@ export class WorkItemApi {
     return this.pendingAdmission(`sproyt-feedback-review:${this.identity()}:${channelId}:${messageId}`)?.payload ?? null;
   }
 
-  async reviewFeedback(channelId: string, messageId: string, issue: FeedbackIssue, assessment: string): Promise<FeedbackIssue> {
+  async reviewFeedback(channelId: string, messageId: string, issue: FeedbackIssue, assessment: string, taskId?: string): Promise<FeedbackIssue> {
     const owner = this.identity();
     const key = `sproyt-feedback-review:${owner}:${channelId}:${messageId}`;
     const text = assessment.trim();
@@ -180,7 +198,7 @@ export class WorkItemApi {
     try {
       const result = await this.http.json(feedbackIssuePath(channelId, messageId) + "/review", decodeFeedbackIssue, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ request_id: admission.id, assessment: text })
+        body: JSON.stringify({ request_id: admission.id, assessment: text, task_id: taskId })
       }, () => this.identity() === owner);
       if (result.issue_url !== issue.issue_url) throw new Error("Svaret gjeld ei anna GitHub-sak.");
       this.clearAdmission(key);

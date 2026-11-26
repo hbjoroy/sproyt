@@ -40,6 +40,13 @@ with assigned as (
             and r.id=x.route_id and r.channel_id=x.channel_id
       )
     union all
+    select 'feedback',cast(i.task_id as text),j.source_message_id,j.channel_id
+    from feedback_intakes i join feedback_jobs j on j.source_message_id=i.source_message_id
+    join channel_memberships cm on cm.channel_id=j.channel_id and cm.user_id=?uuid
+    where i.stage in ('review','clarify','clarify-publication','final-clarify') and i.task_id is not null
+      and not exists(select 1 from feedback_intake_results rr where rr.task_id=i.task_id)
+      and {FEEDBACK_OWNER}
+    union all
     select 'process_pilot', t.id, t.message_id, r.channel_id
     from process_pilot_tasks t
     join process_pilot_runs r on r.id=t.run_id
@@ -64,6 +71,7 @@ enum TaskKind {
     WorkItem,
     StatusChange,
     ProcessPilot,
+    Feedback,
 }
 
 impl TaskKind {
@@ -71,6 +79,7 @@ impl TaskKind {
         match self {
             Self::WorkItem => "work_item",
             Self::StatusChange => "status_change",
+            Self::Feedback => "feedback",
             Self::ProcessPilot => "process_pilot",
         }
     }
@@ -83,6 +92,7 @@ impl FromStr for TaskKind {
         match value {
             "work_item" => Ok(Self::WorkItem),
             "status_change" => Ok(Self::StatusChange),
+            "feedback" => Ok(Self::Feedback),
             "process_pilot" => Ok(Self::ProcessPilot),
             _ => Err(()),
         }
@@ -141,6 +151,15 @@ impl Candidate {
 enum QueueTask {
     WorkItem(Box<TaskView>),
     ProcessPilot(Box<process_pilot::TaskView>),
+    Feedback(FeedbackTask),
+}
+
+#[derive(Serialize)]
+struct FeedbackTask {
+    id: String,
+    message_id: String,
+    title: &'static str,
+    source_excerpt: String,
 }
 
 #[derive(Serialize)]
@@ -214,11 +233,13 @@ impl WorkItems {
         let kind = cursor.map(|key| key.kind.as_str());
         let query = CANDIDATES
             .replace("{ASSIGNMENT_RIGHTS}", ASSIGNMENT_RIGHTS)
+            .replace("{FEEDBACK_OWNER}", &super::intake_actions::owner_rights())
             .replace("{ROUTE_JOINS}", ROUTE_JOINS)
             .replace("{ROUTE_PHASE}", ROUTE_PHASE);
         macro_rules! fetch {
             ($pool:expr, $pg:expr) => {
                 sqlx::query_as(&sql(&query, $pg))
+                    .bind(&actor)
                     .bind(&actor)
                     .bind(&actor)
                     .bind(pilot_engine.is_some())
@@ -258,6 +279,29 @@ impl WorkItems {
                     }
                     Err(error) => Err(error),
                 }
+            }
+            TaskKind::Feedback => {
+                let channel = Uuid::parse_str(&candidate.channel_id).map_err(storage)?;
+                let Some(view) = self
+                    .feedback_intake(actor.clone(), channel, key.message)
+                    .await?
+                else {
+                    return Ok(None);
+                };
+                let title =
+                    if view.clarification_task_id.as_deref() == Some(candidate.task_id.as_str()) {
+                        "Avklar tilbakemelding"
+                    } else if view.review_task_id.as_deref() == Some(candidate.task_id.as_str()) {
+                        "Vurder GitHub-saka"
+                    } else {
+                        return Ok(None);
+                    };
+                Ok(Some(QueueTask::Feedback(FeedbackTask {
+                    id: candidate.task_id.clone(),
+                    message_id: candidate.message_id.clone(),
+                    source_excerpt: view.source_body.chars().take(100).collect(),
+                    title,
+                })))
             }
             TaskKind::ProcessPilot => {
                 let Some(pilot) = pilot else {

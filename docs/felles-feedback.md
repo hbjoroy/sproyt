@@ -1,6 +1,25 @@
 # Frå tilbakemelding i Felles til avslutta GitHub-sak
 
-## Mål og brukarforløp
+## Mottak og prosess frå ende til annan
+
+Med Heart-opptak aktivert i **Felles → Tilbakemeldingar Sprøyt** får kvar ny menneskeskriven hovudmelding sin eigen instans av `sproyt/feedback-intake` 1.0.0. Produkteigaren kan starte same flyt på ei eldre melding med **Fleire meldingsval → Aktiver tilbakemeldinga**. Meldings-ID-en er nøkkelen ved gjenteken innsending. Sprøyt lagrar mottaket før nettverkskallet, slik at ei melding kan vente om Heart er utilgjengeleg.
+
+| Heart-steg | Ansvar og utfall |
+| --- | --- |
+| Kvalifiser | Standardagenten spør Santorini om meldinga er eit konkret produktbehov. Heart går vidare til samanlikning, avklaring eller «Avslutta utan sak». |
+| Finn sak | Agenten samanliknar med opne GitHub-saker. Heart vel å opprette, kommentere, knyte til ei sak som dekkjer behovet, eller be produkteigaren velje. |
+| Avklar tilbakemeldinga | Produkteigaren får ei oppgåve i **Mine oppgåver** med meldinga, grunngjevinga og aktuelle saker. Vel ny sak, ei konkret eksisterande sak eller avslutning utan publisering. Skriv ei kort grunngjeving. |
+| Publiser og kvitter | Sprøyt kontrollerer gjeldande kanal- og GitHub-rettar og at saka framleis er aktuell. Ei kvittering knyter reaksjon og trådsvar til meldinga. Når eit tillegg er publisert eller innhaldet alt er dekt, endar meldingsprosessen som «Knytt til eksisterande sak». |
+| Vurder den nye saka | For ei ny sak får produkteigaren ei vurderingsoppgåve i same instans. **Utført** registrerer vurderinga. |
+| Vent på GitHub | Etter ei fersk stadfesting av lukking gir GitHub-grunnen `completed` utfallet «Løyst» og `not_planned` utfallet «Avvist». Andre grunnar held oppgåva open. |
+
+Eit mål som blir uaktuelt før publisering gir ei ny avklaring. Dersom også det andre valet blir uaktuelt, kan produkteigaren avslutte utan publisering. Ved eit uvisst svar på ei skriving avstemmer arbeidaren den eksisterande publiseringa før neste skriving. Vurderingstekst frå produkteigaren blir lagra i Sprøyt.
+
+**Overgang.** Migrering 0082 let ein slå på nytt opptak per kanal etter at alle arbeidarane er oppgraderte. Køyr operatørskriptet nedanfor først som prøvekøyring og deretter med `apply=on`. Trygge, upubliserte jobbar kan takast inn i den nye flyten. Meldingar som venta på manuell avklaring går til produkteigaren. Allereie publiserte saker og eldre Heart-instansar fullfører på den opphavlege versjonen. Etter opptak på ny versjon krev ei tilbakeføring ein arbeidar som forstår dei aktive instansane.
+
+## Tidlegare flyt og integrasjonskontraktar
+
+### Mål og brukarforløp
 
 Ein deltakar i **Felles → Tilbakemeldingar Sprøyt** skal kunne melde eit konkret behov med éi vanleg melding. Etter publisering får meldinga ein reaksjon og eit trådsvar med lenkje. Under **Fleire meldingsval → GitHub-sak** kan deltakaren sjå den publiserte teksten, siste kjende GitHub-status og steget i Heart. Menyen verkar både på kjeldemeldinga og på agenten si kvittering.
 

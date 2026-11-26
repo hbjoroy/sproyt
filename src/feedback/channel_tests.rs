@@ -188,6 +188,73 @@ async fn feedback_contract(f: Fixture) {
     assert_eq!(count(store, jobs, f.channel).await, 2);
     execute(
         store,
+        "update feedback_jobs set intake_version=1 where source_message_id=?uuid",
+        &[old],
+    )
+    .await;
+    let task = Uuid::now_v7();
+    execute(store,"insert into feedback_intakes(source_message_id,stage,task_id) values(?uuid,'clarify',?uuid)", &[old,task]).await;
+    let viewer = UserId::from_uuid(f.owner); // A full member of the channel, distinct from its product owner.
+    let member_view = f
+        .service
+        .feedback_intake(viewer.clone(), f.channel, old)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!member_view.can_clarify);
+    assert!(member_view.clarification_task_id.is_none());
+    let reviewer_view = f
+        .service
+        .feedback_intake(actor.clone(), f.channel, old)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(reviewer_view.can_clarify);
+    assert_eq!(reviewer_view.clarification_task_id, Some(task.to_string()));
+    for (user, visible) in [(actor.clone(), true), (viewer.clone(), false)] {
+        let page = f
+            .service
+            .task_queue(user, Some(f.channel), None, 50, None)
+            .await
+            .unwrap();
+        let queue = serde_json::to_value(page).unwrap();
+        assert_eq!(
+            queue["tasks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|row| row["kind"] == "feedback" && row["task"]["id"] == task.to_string()),
+            visible
+        );
+    }
+    let cmd = || {
+        serde_json::from_value(json!({"task_id":task,"decision":"dismiss","issue_number":null,"note":"Allereie løyst"})).unwrap()
+    };
+    assert!(
+        f.service
+            .clarify_feedback(viewer, f.channel, old, cmd())
+            .await
+            .is_err()
+    );
+    for _ in 0..2 {
+        let accepted = f
+            .service
+            .clarify_feedback(actor.clone(), f.channel, old, cmd())
+            .await
+            .unwrap();
+        assert!(!accepted.can_clarify);
+    }
+    assert_eq!(
+        count(
+            store,
+            "select count(*) from feedback_intake_results where source_message_id=?uuid",
+            old
+        )
+        .await,
+        1
+    );
+    execute(
+        store,
         "update feedback_routes set enabled=false where channel_id=?uuid",
         &[f.channel],
     )
