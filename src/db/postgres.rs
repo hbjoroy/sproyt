@@ -114,13 +114,59 @@ async fn insert_integration_message_postgres(
 
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations/postgres");
 
+// The first production build of 0081 embedded CRLF. Preserve its exact ledger
+// entry and let SQLx verify every script, including the reconstructed 0081.
+const FEEDBACK_81_CRLF: &str = "5526afe8feaf070f6c90bbb57ffe7d95f7fc121a68ddb54308f2731d243b1bcce8d39a00dbf2c96a75f716eb141898eb";
+
+async fn run_migrations(pool: &PgPool) -> Result<(), RepositoryError> {
+    let mut connection = pool.acquire().await.map_err(sql_error)?;
+    let ledger_exists: bool =
+        sqlx::query_scalar("select to_regclass('_sqlx_migrations') is not null")
+            .fetch_one(&mut *connection)
+            .await
+            .map_err(sql_error)?;
+    let checksum: Option<String> = if ledger_exists {
+        sqlx::query_scalar(
+            "select encode(checksum,'hex') from _sqlx_migrations where version=81 and success",
+        )
+        .fetch_optional(&mut *connection)
+        .await
+        .map_err(sql_error)?
+    } else {
+        None
+    };
+    if checksum.as_deref() != Some(FEEDBACK_81_CRLF) {
+        return MIGRATOR.run_direct(&mut *connection).await.map_err(storage);
+    }
+
+    let mut compatible = sqlx::migrate!("./migrations/postgres");
+    let old = compatible
+        .migrations
+        .to_mut()
+        .iter_mut()
+        .find(|m| m.version == 81)
+        .ok_or_else(|| storage("missing historical migration 0081"))?;
+    let crlf = old.sql.replace("\r\n", "\n").replace('\n', "\r\n");
+    *old = sqlx::migrate::Migration::new(
+        old.version,
+        old.description.clone(),
+        old.migration_type,
+        crlf.into(),
+        old.no_tx,
+    );
+    compatible
+        .run_direct(&mut *connection)
+        .await
+        .map_err(storage)
+}
+
 pub(super) async fn migrate(url: &str) -> Result<(), RepositoryError> {
     let pool = PgPoolOptions::new()
         .max_connections(1)
         .connect(url)
         .await
         .map_err(sql_error)?;
-    let result = MIGRATOR.run(&pool).await.map_err(storage);
+    let result = run_migrations(&pool).await;
     pool.close().await;
     result
 }
@@ -321,7 +367,7 @@ impl PostgresChatRepository {
 
     #[cfg(test)]
     pub async fn migrate(&self) -> Result<(), RepositoryError> {
-        MIGRATOR.run(&self.pool).await.map_err(storage)
+        run_migrations(&self.pool).await
     }
 }
 
