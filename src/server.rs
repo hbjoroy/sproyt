@@ -367,7 +367,23 @@ pub(super) fn build_router(state: AppState, operations: OperationalState) -> Rou
             "/api/v1/me/personal-space/sources/{channel_id}/{message_id}/{sequence}",
             get(crate::web::personal_space::source_message),
         )
-        .route("/api/v1/people/{person}/avatar", get(crate::web::avatars::published))
+        .route(
+            "/api/v1/people/{person}/avatar",
+            get(crate::web::avatars::published),
+        )
+        .route("/api/v1/me/avatar", get(crate::web::avatars::current))
+        .route(
+            "/api/v1/me/avatar/generate/{style}/{request}",
+            post(crate::web::avatars::generate).layer(DefaultBodyLimit::max(8 * 1024 * 1024)),
+        )
+        .route(
+            "/api/v1/me/avatar/{id}/preview",
+            get(crate::web::avatars::preview),
+        )
+        .route(
+            "/api/v1/me/avatar/{id}/review",
+            post(crate::web::avatars::review),
+        )
         .route(
             "/api/v1/people/{person}/card",
             get(crate::web::account::person_card),

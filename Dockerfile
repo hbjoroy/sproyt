@@ -91,6 +91,7 @@ COPY tools/build-media-runtime.sh /tmp/build-media-runtime.sh
 RUN sh /tmp/build-media-runtime.sh "$TARGETARCH"
 
 FROM scratch AS media-worker
+COPY assets/avatar-detection/LICENSE /usr/share/licenses/sproyt/avatar-detection/LICENSE
 ARG VCS_REF=unknown
 LABEL org.opencontainers.image.source="https://github.com/hbjoroy/sproyt" \
       org.opencontainers.image.revision="$VCS_REF"
@@ -103,6 +104,7 @@ ENTRYPOINT ["/app/sproyt", "media-worker"]
 
 # Keep the default target and existing web image unchanged.
 FROM scratch AS runtime
+COPY assets/avatar-detection/LICENSE /usr/share/licenses/sproyt/avatar-detection/LICENSE
 ARG VCS_REF=unknown
 LABEL org.opencontainers.image.source="https://github.com/hbjoroy/sproyt" \
       org.opencontainers.image.revision="$VCS_REF"

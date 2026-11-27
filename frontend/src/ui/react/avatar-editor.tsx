@@ -64,6 +64,7 @@ export function AvatarEditor({ owner, name, actions }: { owner: string; name: st
     <h3>Profilavatar</h3>
     <ProfileAvatar person={owner} fallback={<Avatar name={name} />} />
     {!draft && <form onSubmit={event => { event.preventDefault(); void generate(); }}>
+      <p>Vel eit tydeleg portrett teke framanfrå. Når du lagar ei førehandsvising, blir portrettet stilisert på Santorini.</p>
       <label>Vel eit foto av deg sjølv<input type="file" accept="image/jpeg,image/png,image/webp" disabled={busy || checking}
         onChange={event => { setFile(event.target.files?.[0] ?? null); setRequest(crypto.randomUUID()); setError(""); setNotice(""); }} /></label>
       <label>Stil<select value={style} disabled={busy} onChange={event => { setStyle(event.target.value as AvatarStyle); setRequest(crypto.randomUUID()); }}>

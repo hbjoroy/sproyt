@@ -254,7 +254,7 @@ pub(crate) async fn list(
     };
     match service.list(principal.user.id).await {
         Ok(jobs) => private_json(
-            json!({"enabled":true,"jobs":jobs.iter().map(Job::view).collect::<Vec<_>>()}),
+            json!({"enabled":true,"jobs":jobs.iter().filter(|j| !j.is_avatar()).map(Job::view).collect::<Vec<_>>()}),
         ),
         Err(_) => internal(),
     }
@@ -262,7 +262,7 @@ pub(crate) async fn list(
 
 async fn owned(service: &ImageGeneration, id: &str, owner: UserId) -> Result<Job, Response> {
     match service.get(id).await {
-        Ok(Some(job)) if job.owner_id == owner => Ok(job),
+        Ok(Some(job)) if job.owner_id == owner && !job.is_avatar() => Ok(job),
         Ok(_) => Err(StatusCode::NOT_FOUND.into_response()),
         Err(_) => Err(internal()),
     }

@@ -304,6 +304,14 @@ pub(crate) async fn prepare_uploaded_media(
     .map_err(|_| MediaPreparationError::Worker)?
 }
 
+pub(super) fn decode_oriented_photo(
+    content: &[u8],
+) -> Result<image::DynamicImage, MediaPreparationError> {
+    let image = decode_image(content)?;
+    let orientation = exif_orientation(content, content.starts_with(&[0xff, 0xd8]));
+    Ok(apply_exif_orientation(image, orientation))
+}
+
 fn exif_orientation(content: &[u8], is_jpeg: bool) -> u32 {
     if !is_jpeg {
         return 1;

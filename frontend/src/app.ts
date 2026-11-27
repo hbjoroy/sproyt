@@ -1,4 +1,5 @@
       import { createImageGeneration, imagePrompt } from "./imagegen";
+      import { avatarActions } from "./avatar-api";
       import { personCardLoader } from "./person-card";
       import { PersonalSpaceApi } from "./personal-space";
       import { uploadMediaChunks } from "./media-upload";
@@ -827,6 +828,7 @@
         refreshSession: () => sessionController.refresh(true),
         participant: () => new URLSearchParams(window.location.search).get("participant")
       });
+      const avatars = avatarActions(http, () => currentParticipantId, () => accountGeneration);
       const loadPersonCard = personCardLoader(http, () => currentParticipantId, () => accountGeneration);
       const personalSpace = new PersonalSpaceApi(http, () => currentParticipantId, () => accountGeneration);
       const channelEvents = new ChannelEventsApi(http, () => currentParticipantId, () => accountGeneration);
@@ -6615,6 +6617,7 @@
             setRenderMode: mode => { setRenderMode(mode); refreshDevelopmentPreview(); },
             settings: {
               profile: () => activeProfile(currentParticipantId),
+              avatars,
               profileFor: userId => activeProfile(userId),
               saveName: name => savePreviewProfile("profile_updated", () => sendCommand("update_profile", { display_name: name })),
               saveStatus: (text, emoji) => savePreviewProfile("status_updated", () => sendCommand("set_status", { text, emoji, expires_at: null })),

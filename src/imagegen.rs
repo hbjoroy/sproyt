@@ -15,6 +15,7 @@ use crate::{
     domain::{MediaObject, UserId},
 };
 
+pub(crate) mod avatar;
 pub(crate) mod identity;
 
 const MAX_IMAGE: usize = 8 * 1024 * 1024;

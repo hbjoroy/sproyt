@@ -45,6 +45,7 @@ uuid = { version = "1", features = ["serde", "v5", "v7"] }
 unicode-normalization = "0.1"
 unicode-segmentation = "1.12"
 zeroize = "1"
+rustface = { version = "=0.1.7", default-features = false }
 
 [dev-dependencies]
 rsa = { version = "0.9", features = ["sha2"] }
