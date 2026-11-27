@@ -9,6 +9,7 @@ import type { ChatMessage } from "../../types";
 import { ProductConversationNavigation } from "./conversation-navigation";
 import { WorkspacePageOutlet, WorkspacePageProvider } from "./workspace-page";
 import { ConversationImageGallery } from "./conversation-image-gallery";
+import { ProfileAvatar } from "./profile-avatar";
 import { PersonCardButton, PersonCards, type PersonCardScope } from "./person-card";
 import { PanelResizers } from "./panel-resizers";
 import { PersonalSpacePanes } from "./personal-space";
@@ -386,7 +387,8 @@ export function ConversationMessage(props: MessagePresentation & { readonly mess
   </>;
   return <>{boundary}
     <div ref={wrapper} data-mobile-actions={showMobileMenu ? (actionsOpen ? "open" : "closed") : undefined} data-avatar-tone={kretsrom ? (message.sender_id.charCodeAt(message.sender_id.length - 1) % 4) : undefined} data-message-id={message.id} data-message-sequence={message.sequence} data-date-start={props.dateLabel ? "true" : undefined}>
-    <Row author={author} avatar={Array.from(message.sender_display_name.trim())[0]} authorContent={<>
+    <Row author={author} avatar={props.hasPersonCard?.(message) ? <ProfileAvatar person={message.sender_id} fallback={Array.from(message.sender_display_name.trim())[0]} /> : Array.from(message.sender_display_name.trim())[0]} authorContent={<>
+        {!kretsrom && props.hasPersonCard?.(message) && <ProfileAvatar person={message.sender_id} />}
         <strong>{props.hasPersonCard?.(message)
           ? <PersonCardButton className="sp-person-card-name" id={message.sender_id} name={message.sender_display_name}>{author}</PersonCardButton>
           : author}</strong>

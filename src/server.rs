@@ -367,6 +367,7 @@ pub(super) fn build_router(state: AppState, operations: OperationalState) -> Rou
             "/api/v1/me/personal-space/sources/{channel_id}/{message_id}/{sequence}",
             get(crate::web::personal_space::source_message),
         )
+        .route("/api/v1/people/{person}/avatar", get(crate::web::avatars::published))
         .route(
             "/api/v1/people/{person}/card",
             get(crate::web::account::person_card),

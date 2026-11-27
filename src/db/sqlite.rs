@@ -270,6 +270,16 @@ impl AccountExportRepository for SqliteChatRepository {
 }
 
 impl ChatRepository for SqliteChatRepository {
+    fn profile_avatar(&self, person: UserId) -> RepositoryFuture<'_, Option<Vec<u8>>> {
+        Box::pin(async move {
+            sqlx::query_scalar("select jpeg from profile_avatars where owner_id = $1")
+                .bind(person.to_string())
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(sql_error)
+        })
+    }
+
     fn health_check(&self) -> RepositoryFuture<'_, ()> {
         Box::pin(async move {
             sqlx::query_scalar::<_, i64>("select 1")

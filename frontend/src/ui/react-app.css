@@ -672,6 +672,12 @@
 .sp-person-card-action { padding: .35rem .5rem; color: var(--sp-muted); }
 .sp-direct-picker-list li:has(.sp-person-card-action) { display: flex; align-items: center; }
 .sp-direct-picker-list .sp-direct-person { flex: 1; min-width: 0; }
+.sp-avatar-editor, .sp-avatar-editor form, .sp-avatar-editor label { display: grid; gap: .5rem; justify-items: start; }
+.sp-avatar-editor input, .sp-avatar-editor select { max-width: 100%; }
+.sp-avatar-preview { width: min(12rem, 100%); aspect-ratio: 1; object-fit: cover; border-radius: 50%; }
+.sp-profile-avatar { width: 2rem; height: 2rem; object-fit: cover; border-radius: 50%; vertical-align: middle; }
+.sp-profile-avatar[hidden] { display: none; }
+.sp-person-card-profile .sp-profile-avatar { width: 3rem; height: 3rem; }
 .sp-person-card-profile { display: flex; align-items: center; gap: .75rem; }
 .sp-person-card h3 { margin: 1rem 0 .4rem; }
 .sp-person-card ul { list-style: none; padding: 0; margin: 0; }

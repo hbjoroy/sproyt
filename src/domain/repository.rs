@@ -188,6 +188,7 @@ pub trait ProfileRepository: Send + Sync + 'static {
 }
 
 pub trait ChatRepository: ProfileRepository {
+    fn profile_avatar(&self, person: UserId) -> RepositoryFuture<'_, Option<Vec<u8>>>;
     fn health_check(&self) -> RepositoryFuture<'_, ()>;
     /// Stable signup number. Shared through individual person cards, omitted from people lists.
     fn signup_ordinal<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, Option<u64>>;
@@ -778,6 +779,10 @@ impl AccountExportRepository for InMemoryChatRepository {
 
 #[cfg(test)]
 impl ChatRepository for InMemoryChatRepository {
+    fn profile_avatar(&self, _person: UserId) -> RepositoryFuture<'_, Option<Vec<u8>>> {
+        Box::pin(async { Ok(None) })
+    }
+
     fn health_check(&self) -> RepositoryFuture<'_, ()> {
         Box::pin(async { Ok(()) })
     }

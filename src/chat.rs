@@ -244,6 +244,10 @@ impl ChatEngine {
         Ok(())
     }
 
+    pub async fn profile_avatar(&self, person: UserId) -> Result<Option<Vec<u8>>, ChatError> {
+        Ok(self.repository.profile_avatar(person).await?)
+    }
+
     pub async fn person_card(
         &self,
         viewer: UserId,

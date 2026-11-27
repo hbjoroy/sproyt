@@ -1,4 +1,5 @@
 import { Button, Dialog, Status, TextField } from "@sproyt/ui/react";
+import { AvatarEditor, type AvatarActions } from "./avatar-editor";
 import { DestinationPage } from "./workspace-page";
 import { useEffect, useId, useRef, useState } from "react";
 import type { NotificationPreferences, NotificationSettings } from "../../api";
@@ -6,6 +7,7 @@ import type { UserProfile } from "../../types";
 import type { SavedStatus } from "../../saved-statuses";
 
 export interface PreviewSettingsHost {
+  readonly avatars?: AvatarActions;
   profile(): UserProfile | undefined;
   profileFor?(userId: string): UserProfile | undefined;
   saveName(name: string): Promise<void>;
@@ -92,6 +94,7 @@ export function PreviewProfile({ host, focusStatus = false }: { host: PreviewSet
   }
   if (!profile) return <Status>Profilen blir lasta. Lukk og opne innstillingane igjen om det tek lang tid.</Status>;
   return <div style={{ display: "grid", gap: 16 }}>
+    {!focusStatus && host.avatars && <AvatarEditor key={profile.id} owner={profile.id} name={profile.display_name} actions={host.avatars} />}
     {profile.early_adopter && <p className="sp-profile-early-adopter" title="Du er blant dei første 50 på Sprøyt">
       <span aria-hidden="true">✨</span> Første 50 på Sprøyt
     </p>}

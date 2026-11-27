@@ -1,3 +1,4 @@
+import { ProfileAvatar } from "./profile-avatar";
 import { Avatar, Button, Dialog, Status } from "@sproyt/ui/react";
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import type { LoadPersonCard, PersonCardData } from "../../person-card";
@@ -70,7 +71,7 @@ function PersonDialog({ scope, id, close }: { scope: PersonCardScope; id: string
   return <Dialog open title={card?.display_name ?? "Personkort"} closeLabel="Lukk personkortet" onClose={close}>
     {failed ? <><Status tone="error">Kunne ikkje hente personkortet.</Status><Button onClick={() => retry(value => value + 1)}>Prøv igjen</Button></>
       : !card ? <Status>Hentar personkort …</Status> : <section className="sp-person-card">
-        <div className="sp-person-card-profile"><Avatar name={card.display_name} />
+        <div className="sp-person-card-profile"><ProfileAvatar key={id} person={id} fallback={<Avatar name={card.display_name} />} />
           <div>{card.handle && <div>@{card.handle}</div>}
             {card.signup_ordinal !== null && <strong>Sprøyt-nummer {card.signup_ordinal}</strong>}
             <div>Med sidan {new Date(card.created_at).toLocaleDateString("nn-NO", { day: "numeric", month: "long", year: "numeric" })}</div>

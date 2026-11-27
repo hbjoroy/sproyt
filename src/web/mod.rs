@@ -11,6 +11,7 @@ pub(crate) mod channel_references;
 pub(crate) mod chatbot;
 pub(crate) mod enrollment;
 pub(crate) mod http;
+pub(crate) mod avatars;
 pub(crate) mod imagegen;
 pub(crate) mod integrations;
 pub(crate) mod mcp;
