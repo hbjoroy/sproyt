@@ -106,15 +106,16 @@ test("a horizontal touch changes images in both directions and a zoomed drag pan
   await enter(page, "channel");
   await first(2, page).click();
   const cdp = await context.newCDPSession(page);
-  async function swipe(from: number, to: number) {
+  async function swipe(from: number, to: number, repeatMeasurement = false) {
     await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: from, y: 270 }] });
+    if (repeatMeasurement) await page.locator("dialog[open] img").dispatchEvent("load");
     await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: to, y: 273 }] });
     await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
   }
   await expect(viewer(page, 2).getByRole("button", { name: "Zoom inn" })).toBeEnabled();
   await swipe(320, 100);
   await expect(viewer(page, 3).getByRole("img")).toBeVisible();
-  await swipe(100, 320);
+  await swipe(100, 320, true);
   await expect(viewer(page, 2).getByRole("img")).toBeVisible();
   await viewer(page, 2).getByRole("button", { name: "Zoom inn" }).click();
   await swipe(320, 100);

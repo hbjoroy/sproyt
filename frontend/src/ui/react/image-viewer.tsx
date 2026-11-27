@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent } from "react";
+import { useEffect, useLayoutEffect, useId, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent } from "react";
 import { ImageDownloadLink } from "./image-download-link";
 
 type View = { scale: number; x: number; y: number };
@@ -27,6 +27,7 @@ export function ImageViewer({ src, downloadSrc, name, onClose, gallery, onPrevio
   const lastPointerType = useRef("");
   const [view, setView] = useState<View>({ scale: 1, x: 0, y: 0 });
   const viewRef = useRef(view);
+  const measured = useRef<{ width: number; height: number; imageWidth: number; imageHeight: number } | null>(null);
   const fittedScale = useRef(1);
   const fitting = useRef<"width" | "screen" | null>("width");
   const [ready, setReady] = useState(false);
@@ -64,6 +65,13 @@ export function ImageViewer({ src, downloadSrc, name, onClose, gallery, onPrevio
     const viewport = surface.current;
     const content = image.current;
     if (!viewport?.clientWidth || !viewport.clientHeight || !content?.naturalWidth || !content.naturalHeight) return;
+    // Image load and ResizeObserver can report the same layout on consecutive
+    // frames. Only a real geometry change invalidates a gesture in progress.
+    const previous = measured.current;
+    if (previous?.width === viewport.clientWidth && previous.height === viewport.clientHeight
+      && previous.imageWidth === content.naturalWidth && previous.imageHeight === content.naturalHeight) return;
+    measured.current = { width: viewport.clientWidth, height: viewport.clientHeight,
+      imageWidth: content.naturalWidth, imageHeight: content.naturalHeight };
     // 100% is one decoded original pixel per CSS pixel, independent of viewport size.
     fittedScale.current = Math.min(1, viewport.clientWidth / content.naturalWidth, viewport.clientHeight / content.naturalHeight);
     const scale = fitting.current === "width" ? Math.min(1, viewport.clientWidth / content.naturalWidth)
@@ -78,7 +86,8 @@ export function ImageViewer({ src, downloadSrc, name, onClose, gallery, onPrevio
     lastTap.current = null;
   };
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    measured.current = null;
     swipe.current = null;
     fitting.current = "width";
     setReady(false);
