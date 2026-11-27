@@ -38,7 +38,7 @@ test("two people see the same signup number and only their accessible conversati
   const personalSpace = author.app.getByRole("button", { name: "Området mitt", exact: true });
   if (!await personalSpace.isVisible()) await author.app.getByRole("button", { name: "Samtalar", exact: true }).click();
   await personalSpace.click();
-  await expect(pane.getByRole("heading", { name: "Området mitt", exact: true })).toBeVisible();
+  await expect(author.app.getByRole("region", { name: "Området mitt", exact: true })).toBeVisible();
   await expect(pane.getByRole("textbox", { name: "Skriv melding" })).toBeEnabled();
   const secret = `Privat frå ${authorName}`;
   const own = await send(secret);
