@@ -75,6 +75,7 @@ test("two people see the same signup number and only their accessible conversati
     await replyRow.getByRole("button", { name: /^Vis personkort for / }).click();
     await directShortcut.click();
     await expect(card).toHaveCount(0);
+    await expect(reader.app.locator(".sp-thread-pane")).toHaveCount(0);
     const readerPane = reader.app.locator(".sp-channel-pane");
     await expect(readerPane.getByRole("textbox", { name: "Skriv melding", exact: true })).toBeEnabled();
     await expect(other).not.toHaveURL(threadUrl);

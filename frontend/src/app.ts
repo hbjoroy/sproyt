@@ -5067,6 +5067,7 @@
             ...(pendingMessageLink.sequence ? { sequence: pendingMessageLink.sequence } : {}),
             ...(pendingMessageLink.threadId ? { threadId: pendingMessageLink.threadId } : {}) } : {}) },
           managementTarget?.kind === "community" && ["people", "create-channel"].includes(managementTarget.destination.kind) ? "replace" : "push");
+        if (channel.id !== activeChannelId && activeThreadRootId) quietlyNavigate(closeThreadState);
         if (pendingMessageLink && pendingMessageLink.channelId !== channel.id) pendingMessageLink = null;
         messageLinkHistoryRequestId = null;
         composerScopeGeneration += 1;
