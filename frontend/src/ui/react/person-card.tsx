@@ -8,6 +8,7 @@ export interface PersonCardScope {
   owner: string;
   key: string;
   load: LoadPersonCard;
+  openDirect(id: string): Promise<void>;
   channels: readonly { id: string; name: string }[];
   navigate(target: ViewTarget): void;
 }
@@ -29,13 +30,29 @@ export function PersonCards({ scope, children }: { scope?: PersonCardScope; chil
   const active = selected?.key === key ? selected : null;
   return <OpenCard.Provider value={scope ? open : undefined}>
     {children}
-    {scope && active && <PersonDialog key={`${scope.key}/${active.id}`} scope={scope} id={active.id} close={() => setSelected(null)} />}
+    {scope && active && <PersonDialog key={`${scope.key}/${active.id}`} scope={scope} id={active.id} close={() => setSelected(current => current === active ? null : current)} />}
   </OpenCard.Provider>;
 }
 
 function PersonDialog({ scope, id, close }: { scope: PersonCardScope; id: string; close(): void }) {
   const [card, setCard] = useState<PersonCardData>();
   const [failed, setFailed] = useState(false);
+  const [openingDirect, setOpeningDirect] = useState(false);
+  const [directError, setDirectError] = useState("");
+
+  async function openDirect() {
+    if (openingDirect) return;
+    setOpeningDirect(true);
+    setDirectError("");
+    try {
+      await scope.openDirect(id);
+      close();
+    } catch {
+      setDirectError("Kunne ikkje opne direktemeldinga. Prøv igjen.");
+      setOpeningDirect(false);
+    }
+  }
+
   const [attempt, retry] = useState(0);
   const membership = scope.channels.map(channel => channel.id).sort().join(",");
   useEffect(() => {
@@ -60,6 +77,8 @@ function PersonDialog({ scope, id, close }: { scope: PersonCardScope; id: string
           </div>
         </div>
         {(card.status_emoji || card.status_text) && <p>{[card.status_emoji, card.status_text].filter(Boolean).join(" ")}</p>}
+        {id !== scope.owner && <Button busy={openingDirect} disabled={openingDirect} onClick={openDirect}>Send direktemelding</Button>}
+        {directError && <Status tone="error">{directError}</Status>}
         <h3>Siste meldingar</h3>
         {messages.length === 0 && <p>Ingen meldingar i samtalane du har tilgang til.</p>}
         <ul>{messages.map(m => {

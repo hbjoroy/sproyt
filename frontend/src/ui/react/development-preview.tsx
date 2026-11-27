@@ -1,3 +1,4 @@
+import { existingDirectChannel } from "../../direct-conversation";
 import type { LoadPersonCard } from "../../person-card";
 import { Button, Dialog, Status, TextField } from "@sproyt/ui/react";
 import { createPortal } from "react-dom";
@@ -846,6 +847,11 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
         <Button variant="quiet" onClick={backToConversations}>Vis samtalar</Button></div> : undefined,
     ownerId: owner ?? undefined,
     personCards: owner ? { owner, key: `${owner}/${accountEpoch}/${historyState.entryId}`, load: host.loadPersonCard,
+      async openDirect(id) {
+        const existing = existingDirectChannel(host.snapshot().channels, id);
+        if (existing) host.navigateView({ kind: "conversation", channelId: existing.id });
+        else await host.community.openDirect(id);
+      },
       navigate: host.navigateView, channels: [...snapshot.channelChoices, ...snapshot.channels.filter(channel => channel.is_personal)] } : undefined,
     personalShortcut: owner && <PersonalSpaceShortcut key={`${owner}:${accountEpoch}`} active={personal && historyState.target?.kind === "conversation"}
       ready={snapshot.directory.ready} onOpen={() => host.openPersonalSpace(owner)} />,
