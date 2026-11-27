@@ -70,8 +70,9 @@ impl Style {
     }
 
     fn prompt(&self) -> String {
+        let article = if matches!(self, Self::Oil) { "an" } else { "a" };
         format!(
-            "Create a centered head-and-shoulders portrait as a {}. Start with a straight-on camera view. Keep the shoulders square to the camera and the head upright. Turn the face just 15 degrees toward the right edge of the finished picture (the viewer's right). The nose points slightly to the right of center. Show both eyes fully and both cheeks, with a nearly frontal face. Follow this pose even if the reference pose differs. Preserve the person's identity, age, hair and facial features. Fit the whole head inside the central square, with a simple background and no text.",
+            "A studio headshot of this person as {article} {}. Compose a near-frontal view, with the face at a slight 15-degree angle to camera-right and the eyes meeting the lens. The nose is a little to the right of the midpoint between the pupils; we see almost equal amounts of both cheeks. On the left side of the picture, a little more ear and cheek are visible. Relaxed expression, level head, shoulders facing the camera. Frame the whole head within the central square. Keep the recognizable face, age and hairstyle. Plain background.",
             self.material()
         )
     }
