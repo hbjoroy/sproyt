@@ -189,13 +189,16 @@ pub trait ProfileRepository: Send + Sync + 'static {
 
 pub trait ChatRepository: ProfileRepository {
     fn health_check(&self) -> RepositoryFuture<'_, ()>;
-    /// The private, never-reused position assigned to a human account.  This
-    /// deliberately is not part of `UserProfile`: other people must not be
-    /// able to enumerate early adopters through people lists.
+    /// Stable signup number. Shared through individual person cards, omitted from people lists.
     fn signup_ordinal<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, Option<u64>>;
     #[allow(dead_code)] // Kept during the profile-protocol rollout for repository compatibility.
     fn list_human_users<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, Vec<User>>;
     fn list_user_profiles<'a>(&'a self, actor: UserId) -> RepositoryFuture<'a, Vec<UserProfile>>;
+    fn person_card<'a>(
+        &'a self,
+        viewer: UserId,
+        person: UserId,
+    ) -> RepositoryFuture<'a, super::PersonCard>;
     fn list_circle_user_profiles<'a>(
         &'a self,
         actor: UserId,
@@ -942,6 +945,39 @@ impl ChatRepository for InMemoryChatRepository {
                     .cmp(right.user.display_name.as_str())
             });
             Ok(profiles)
+        })
+    }
+
+    fn person_card<'a>(
+        &'a self,
+        viewer: UserId,
+        person: UserId,
+    ) -> RepositoryFuture<'a, super::PersonCard> {
+        Box::pin(async move {
+            let profile = self
+                .list_user_profiles(viewer.clone())
+                .await?
+                .into_iter()
+                .find(|profile| profile.user.id == person)
+                .ok_or(RepositoryError::NotFound)?;
+            let state = self.lock_state()?;
+            let mut messages: Vec<_> = state
+                .messages
+                .iter()
+                .filter(|(channel, _)| {
+                    state
+                        .memberships
+                        .contains_key(&((*channel).clone(), viewer.clone()))
+                })
+                .flat_map(|(_, messages)| messages.iter())
+                .filter(|m| m.sender_id == person && m.deleted_at.is_none())
+                .collect();
+            messages.sort_unstable_by_key(|m| std::cmp::Reverse((m.sent_at, m.id)));
+            Ok(super::PersonCard::new(
+                profile,
+                state.signup_ordinals.get(&person).copied(),
+                messages.into_iter().take(5).cloned().collect(),
+            ))
         })
     }
 

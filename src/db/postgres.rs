@@ -571,6 +571,50 @@ impl ChatRepository for PostgresChatRepository {
         })
     }
 
+    fn person_card<'a>(
+        &'a self,
+        viewer: UserId,
+        person: UserId,
+    ) -> RepositoryFuture<'a, crate::domain::PersonCard> {
+        Box::pin(async move {
+            let row = sqlx::query(
+                "select u.*, o.ordinal, coalesce(o.ordinal <= 50, false) as early_adopter
+                from users u left join signup_ordinals o on o.user_id = u.id
+                where u.id = $1 and u.kind = 'human' and exists
+                (select 1 from users viewer where viewer.id = $2 and viewer.kind = 'human')",
+            )
+            .bind(*person.as_uuid())
+            .bind(*viewer.as_uuid())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(sql_error)?
+            .ok_or(RepositoryError::NotFound)?;
+            let ordinal = row
+                .try_get::<Option<i64>, _>("ordinal")
+                .map_err(storage)?
+                .map(u64::try_from)
+                .transpose()
+                .map_err(storage)?;
+            let profile = user_profile_from_row(row)?;
+            let rows = sqlx::query(
+                "select m.* from messages m
+                join channel_memberships membership on membership.channel_id = m.channel_id
+                where m.sender_id = $1 and membership.user_id = $2 and m.deleted_at is null
+                order by m.created_at desc, m.id desc limit 5",
+            )
+            .bind(*person.as_uuid())
+            .bind(*viewer.as_uuid())
+            .fetch_all(&self.pool)
+            .await
+            .map_err(sql_error)?;
+            let messages = rows
+                .into_iter()
+                .map(chat_message)
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(crate::domain::PersonCard::new(profile, ordinal, messages))
+        })
+    }
+
     fn list_circle_user_profiles<'a>(
         &'a self,
         actor: UserId,

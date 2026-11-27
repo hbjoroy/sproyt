@@ -1,3 +1,4 @@
+import { PersonCardButton } from "./person-card";
 import { DestinationPage } from "./workspace-page";
 import { ChannelChatAgentsPanel } from "./channel-chat-agents";
 import channelSettingsCss from "./channel-settings.css";
@@ -227,6 +228,7 @@ function ChannelPeople({ host, channel, snapshot, onClose, onSelectChannel, focu
     {!loaded && !op.error && <Status>Hentar medlemmer …</Status>}
     {loaded && <PersonList people={visible.map(person => ({ id: person.id, name: person.display_name, detail: [person.handle ? `@${person.handle}` : "", person.status_emoji, person.status_text].filter(Boolean).join(" · ") }))}
       emptyLabel="Ingen personar passar søket." actions={person => <>
+        <PersonCardButton id={person.id} name={person.name} />
         {person.id !== scope.owner && <Button className="sp-community-direct" variant="quiet" aria-label={`${existingDirectChannel(snapshot.channels, person.id) ? "Opne" : "Start"} samtale med ${person.name}`} title={`${existingDirectChannel(snapshot.channels, person.id) ? "Opne" : "Start"} samtale med ${person.name}`} disabled={op.busy} onClick={() => void openPerson(person.id)}>↗</Button>}
         {(() => {
           const role = governance?.members.find(member => member.user_id === person.id)?.role;
@@ -299,9 +301,10 @@ function CirclePeople({ host, circle }: { host: CommunityHost; circle: Readonly<
     {loaded && <PersonList people={members.map(([person,role])=>({id:person.id,name:person.display_name,detail:role==="owner"?"Eigar":role==="moderator"?"Moderator":"Medlem"}))}
       emptyLabel="Ingen medlemmer." actions={item=>{
         const [person,role]=members.find(([person])=>person.id===item.id)!;
-        return circle.role==="owner" && person.kind==="human" && role!=="owner" ? <Button variant="quiet" disabled={op.busy}
+        return <><PersonCardButton id={person.id} name={person.display_name} />
+          {circle.role==="owner" && person.kind==="human" && role!=="owner" && <Button variant="quiet" disabled={op.busy}
           aria-label={role==="moderator"?`Fjern moderatorrolla frå ${person.display_name}`:`Gjer ${person.display_name} til moderator`}
-          onClick={()=>void op.run(async()=>{await host.setCircleMemberRole(circle.id,person.id,role==="moderator"?"member":"moderator");await load();},"Rolla er oppdatert.")}>{role==="moderator"?"Fjern moderator":"Gjer til moderator"}</Button> : null;
+          onClick={()=>void op.run(async()=>{await host.setCircleMemberRole(circle.id,person.id,role==="moderator"?"member":"moderator");await load();},"Rolla er oppdatert.")}>{role==="moderator"?"Fjern moderator":"Gjer til moderator"}</Button>}</>;
       }} />}{op.feedback}</section>;
 }
 

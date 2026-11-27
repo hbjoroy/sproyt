@@ -1,4 +1,5 @@
       import { createImageGeneration, imagePrompt } from "./imagegen";
+      import { personCardLoader } from "./person-card";
       import { PersonalSpaceApi } from "./personal-space";
       import { uploadMediaChunks } from "./media-upload";
       import { ProcessPilotApi } from "./process-pilot";
@@ -826,6 +827,7 @@
         refreshSession: () => sessionController.refresh(true),
         participant: () => new URLSearchParams(window.location.search).get("participant")
       });
+      const loadPersonCard = personCardLoader(http, () => currentParticipantId, () => accountGeneration);
       const personalSpace = new PersonalSpaceApi(http, () => currentParticipantId, () => accountGeneration);
       const channelEvents = new ChannelEventsApi(http, () => currentParticipantId, () => accountGeneration);
       const channelTopics = new ChannelTopicsApi(http, () => currentParticipantId, () => accountGeneration);
@@ -6526,6 +6528,7 @@
               capabilities: () => availableClientFeatures
             }),
             imageGeneration,
+            loadPersonCard,
             personalSpace,
             channelWork: new ChannelWorkApi(http),
             channelEvents,

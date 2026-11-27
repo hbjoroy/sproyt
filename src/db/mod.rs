@@ -4032,3 +4032,118 @@ async fn verify_channel_governance_contract<R: ChatRepository>(repository: &R, s
         Err(RepositoryError::PermissionDenied)
     );
 }
+
+#[cfg(test)]
+async fn verify_person_card(repo: &impl ChatRepository) {
+    use crate::domain::*;
+    let author = UserId::from_uuid(uuid::Uuid::now_v7());
+    let viewer = UserId::from_uuid(uuid::Uuid::now_v7());
+    for id in [&author, &viewer] {
+        repo.upsert_user(User {
+            id: id.clone(),
+            kind: PrincipalKind::Human,
+            display_name: DisplayName::new("Lesar").unwrap(),
+            handle: None,
+            external_provider: None,
+            external_subject: None,
+            created_at: chrono::Utc::now(),
+        })
+        .await
+        .unwrap();
+    }
+    let shared = repo
+        .create_channel(CreateChannel {
+            actor: author.clone(),
+            name: DisplayName::new("Delt").unwrap(),
+            slug: ChannelSlug::new(format!("test-{}", uuid::Uuid::now_v7().simple())).unwrap(),
+            kind: ChannelKind::Public,
+            circle_id: None,
+        })
+        .await
+        .unwrap();
+    repo.join_channel(JoinChannel {
+        actor: viewer.clone(),
+        channel: ChannelRef::Id(shared.id.clone()),
+    })
+    .await
+    .unwrap();
+    let private = repo.open_personal_space(author.clone()).await.unwrap();
+    let mut sent = Vec::new();
+    for n in 0..8 {
+        let ch = if n == 6 { &private } else { &shared };
+        let message = repo
+            .append_message(SendMessage {
+                actor: author.clone(),
+                channel_id: ch.id.clone(),
+                parent_message_id: None,
+                body: MessageBody::new(format!("Melding {n}")).unwrap(),
+            })
+            .await
+            .unwrap();
+        sent.push(message.id);
+    }
+    repo.delete_message(DeleteMessage {
+        actor: author.clone(),
+        message_id: sent[7],
+    })
+    .await
+    .unwrap();
+    let card = repo
+        .person_card(viewer.clone(), author.clone())
+        .await
+        .unwrap();
+    let ordinal = repo.signup_ordinal(author.clone()).await.unwrap().unwrap();
+    assert_eq!(card.signup_ordinal, Some(ordinal));
+    assert_eq!(
+        card.messages.iter().map(|m| m.id).collect::<Vec<_>>(),
+        [sent[5], sent[4], sent[3], sent[2], sent[1]]
+    );
+    assert_eq!(
+        repo.person_card(author.clone(), author.clone())
+            .await
+            .unwrap()
+            .messages[0]
+            .id,
+        sent[6]
+    );
+    repo.leave_channel(LeaveChannel {
+        actor: viewer.clone(),
+        channel_id: shared.id,
+    })
+    .await
+    .unwrap();
+    assert!(
+        repo.person_card(viewer, author)
+            .await
+            .unwrap()
+            .messages
+            .is_empty()
+    );
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn memory_person_card() {
+    verify_person_card(&crate::domain::InMemoryChatRepository::default()).await;
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn sqlite_person_card() {
+    let repo = SqliteChatRepository::connect("sqlite::memory:")
+        .await
+        .unwrap();
+    repo.migrate().await.unwrap();
+    verify_person_card(&repo).await;
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn postgres_person_card() {
+    let Ok(url) = std::env::var("SPROYT_POSTGRES_TEST_URL") else {
+        return;
+    };
+    let repo = PostgresChatRepository::connect(&url).await.unwrap();
+    repo.migrate().await.unwrap();
+    verify_person_card(&repo).await;
+}

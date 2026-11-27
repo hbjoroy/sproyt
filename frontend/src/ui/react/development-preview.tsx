@@ -1,3 +1,4 @@
+import type { LoadPersonCard } from "../../person-card";
 import { Button, Dialog, Status, TextField } from "@sproyt/ui/react";
 import { createPortal } from "react-dom";
 import channelActionsCss from "../channel-actions-popover.css";
@@ -72,6 +73,7 @@ import { ChannelTopics, ChannelTopicSetting } from "./channel-topics";
 
 const PLACE_LOOKUP_MARKER = "Opne stadssøket for ferske barforslag.";
 
+
 interface DevelopmentPreviewHost extends PreviewReactionHost, PreviewComposerHost, PreviewInboxHost {
   readonly retryThreadSummaries: () => void;
   readonly threadPreviews: ThreadPreviewApi;
@@ -94,6 +96,7 @@ interface DevelopmentPreviewHost extends PreviewReactionHost, PreviewComposerHos
   readonly workItems: WorkItemApi;
   readonly processPilotIdentity: () => string;
   readonly imageGeneration: ImageGenerationOwner;
+  readonly loadPersonCard: LoadPersonCard;
   readonly personalSpace: PersonalSpaceApi;
   readonly channelWork: ChannelWorkApi;
   readonly channelEvents: ChannelEventsApi;
@@ -842,6 +845,8 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
         {!snapshot.directory.ready && <Button variant="quiet" onClick={host.retryDirectory}>Prøv igjen</Button>}
         <Button variant="quiet" onClick={backToConversations}>Vis samtalar</Button></div> : undefined,
     ownerId: owner ?? undefined,
+    personCards: owner ? { owner, key: `${owner}/${accountEpoch}/${historyState.entryId}`, load: host.loadPersonCard,
+      navigate: host.navigateView, channels: [...snapshot.channelChoices, ...snapshot.channels.filter(channel => channel.is_personal)] } : undefined,
     personalShortcut: owner && <PersonalSpaceShortcut key={`${owner}:${accountEpoch}`} active={personal && historyState.target?.kind === "conversation"}
       ready={snapshot.directory.ready} onOpen={() => host.openPersonalSpace(owner)} />,
     personalSpace: owner ? { owner, accountKey: `${owner}:${accountEpoch}`, api: host.personalSpace, work: personal && work, onWorkChange: setSecondaryPaneOpen,
@@ -984,6 +989,7 @@ export function mountDevelopmentPreview(host: DevelopmentPreviewHost) {
       formatTime: sentAt => new Date(sentAt).toLocaleTimeString(["nn-NO", "nb-NO"], { hour: "2-digit", minute: "2-digit", hourCycle: "h23" }),
       formatAuthor: message => host.isOwnMessage(message) ? "Du" : message.sender_display_name,
       earlyAdopter: message => Boolean(host.settings.profileFor?.(message.sender_id)?.early_adopter),
+      hasPersonCard: message => host.settings.profileFor?.(message.sender_id)?.kind === "human",
       renderAuthorStatus: message => <MessageProfileStatus compact={kretsrom} host={host.settings} userId={message.sender_id} own={host.isOwnMessage(message)} />,
       messageStatus: host.messageStatus,
       renderReactions: message => <PreviewMessageReactions message={message} host={host} owner={kretsrom ? owner : null} />,

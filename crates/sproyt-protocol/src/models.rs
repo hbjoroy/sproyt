@@ -49,7 +49,7 @@ pub struct UserProfile {
     #[serde(flatten)]
     pub user: User,
     /// Whether this human account was among the first 50 private sign-ups.
-    /// The ordinal itself remains private.
+    /// The exact ordinal is available separately on the authenticated person card.
     #[serde(default)]
     pub early_adopter: bool,
     pub status_text: String,

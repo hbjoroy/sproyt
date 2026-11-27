@@ -22,3 +22,35 @@ pub use repository::{
 };
 pub(crate) use repository::{personal_channel, personal_link_body};
 pub use sproyt_protocol::*;
+
+/// Profile details available on demand to an authenticated viewer.
+#[derive(serde::Serialize)]
+pub struct PersonCard {
+    pub id: UserId,
+    pub display_name: DisplayName,
+    pub handle: Option<Handle>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub signup_ordinal: Option<u64>,
+    pub status_text: String,
+    pub status_emoji: String,
+    pub messages: Vec<ChatMessage>,
+}
+
+impl PersonCard {
+    pub fn new(
+        profile: UserProfile,
+        signup_ordinal: Option<u64>,
+        messages: Vec<ChatMessage>,
+    ) -> Self {
+        Self {
+            id: profile.user.id,
+            display_name: profile.user.display_name,
+            handle: profile.user.handle,
+            created_at: profile.user.created_at,
+            signup_ordinal,
+            status_text: profile.status_text,
+            status_emoji: profile.status_emoji,
+            messages,
+        }
+    }
+}

@@ -368,6 +368,10 @@ pub(super) fn build_router(state: AppState, operations: OperationalState) -> Rou
             get(crate::web::personal_space::source_message),
         )
         .route(
+            "/api/v1/people/{person}/card",
+            get(crate::web::account::person_card),
+        )
+        .route(
             "/api/v1/me/favorite-circles/{circle_id}",
             axum::routing::put(add_favorite_circle).delete(remove_favorite_circle),
         )

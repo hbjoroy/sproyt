@@ -463,3 +463,22 @@ pub(crate) async fn unsubscribe_push(
         Err(error) => repository_response(error),
     }
 }
+
+pub(crate) async fn person_card(
+    State(state): State<AppState>,
+    Path(person): Path<uuid::Uuid>,
+    Query(query): Query<WsQuery>,
+    headers: HeaderMap,
+) -> Result<axum::response::Response, axum::response::Response> {
+    let viewer = crate::web::personal_space::authenticated_user(&state, query, &headers).await?;
+    let card = state
+        .chat
+        .person_card(viewer.id, crate::domain::UserId::from_uuid(person))
+        .await
+        .map_err(chat_error_response)?;
+    Ok((
+        [(axum::http::header::CACHE_CONTROL, "private, no-store")],
+        Json(card),
+    )
+        .into_response())
+}

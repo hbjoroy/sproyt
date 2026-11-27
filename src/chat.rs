@@ -244,6 +244,17 @@ impl ChatEngine {
         Ok(())
     }
 
+    pub async fn person_card(
+        &self,
+        viewer: UserId,
+        person: UserId,
+    ) -> Result<crate::domain::PersonCard, ChatError> {
+        self.repository
+            .person_card(viewer, person)
+            .await
+            .map_err(ChatError::from)
+    }
+
     pub async fn signup_ordinal(&self, actor: UserId) -> Result<Option<u64>, ChatError> {
         self.repository
             .signup_ordinal(actor)

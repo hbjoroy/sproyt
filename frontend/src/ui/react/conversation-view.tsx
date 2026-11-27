@@ -9,6 +9,7 @@ import type { ChatMessage } from "../../types";
 import { ProductConversationNavigation } from "./conversation-navigation";
 import { WorkspacePageOutlet, WorkspacePageProvider } from "./workspace-page";
 import { ConversationImageGallery } from "./conversation-image-gallery";
+import { PersonCardButton, PersonCards, type PersonCardScope } from "./person-card";
 import { PanelResizers } from "./panel-resizers";
 import { PersonalSpacePanes } from "./personal-space";
 import type { PersonalSpaceLayout } from "./personal-space";
@@ -74,7 +75,8 @@ export interface TimelineProps {
   readonly matches?: Readonly<{ label: string; onOpen: (message: ChatMessage, anchor: HTMLElement) => void }>;
   readonly formatTime: (sentAt: string) => string;
   readonly formatAuthor?: (message: ChatMessage) => string;
-  /** Marks public first-50 members without exposing their private signup number. */
+  /** Marks the first 50 members in the conversation. */
+  readonly hasPersonCard?: (message: ChatMessage) => boolean;
   readonly earlyAdopter?: (message: ChatMessage) => boolean;
   readonly renderAuthorStatus?: (message: ChatMessage) => ReactNode;
   /** Render safe React-owned message content. */
@@ -157,7 +159,7 @@ export function ConversationTimeline(props: TimelineProps) {
     error={props.error} onLoadOlder={props.onLoadOlder}>{timeline}</ConversationImageGallery>;
 }
 
-export type MessagePresentation = Pick<TimelineProps, "formatTime" | "formatAuthor" | "earlyAdopter" | "renderAuthorStatus" | "renderContent" | "renderActions" | "renderReactions" | "renderThreadSummary" | "messageStatus" | "onReactionRequest">;
+export type MessagePresentation = Pick<TimelineProps, "formatTime" | "formatAuthor" | "hasPersonCard" | "earlyAdopter" | "renderAuthorStatus" | "renderContent" | "renderActions" | "renderReactions" | "renderThreadSummary" | "messageStatus" | "onReactionRequest">;
 
 export function formatMessageDateTime(sentAt: string): string {
   return new Date(sentAt).toLocaleString(["nn-NO", "nb-NO"], { dateStyle: "full", timeStyle: "medium" });
@@ -385,7 +387,9 @@ export function ConversationMessage(props: MessagePresentation & { readonly mess
   return <>{boundary}
     <div ref={wrapper} data-mobile-actions={showMobileMenu ? (actionsOpen ? "open" : "closed") : undefined} data-avatar-tone={kretsrom ? (message.sender_id.charCodeAt(message.sender_id.length - 1) % 4) : undefined} data-message-id={message.id} data-message-sequence={message.sequence} data-date-start={props.dateLabel ? "true" : undefined}>
     <Row author={author} avatar={Array.from(message.sender_display_name.trim())[0]} authorContent={<>
-        <strong>{author}</strong>
+        <strong>{props.hasPersonCard?.(message)
+          ? <PersonCardButton className="sp-person-card-name" id={message.sender_id} name={message.sender_display_name}>{author}</PersonCardButton>
+          : author}</strong>
         {kretsrom && props.renderAuthorStatus?.(message)}
         {earlyAdopter && <button type="button" className="sp-message-early-adopter"
           aria-label="Blant dei første 50 på Sprøyt" title="Blant dei første 50 på Sprøyt">✨</button>}
@@ -417,6 +421,7 @@ export interface ConversationViewProps {
   readonly title: string;
   readonly context?: string;
   readonly contextActions?: ReactNode;
+  readonly personCards?: PersonCardScope;
   readonly personalSpace?: PersonalSpaceLayout;
   readonly isPersonal?: boolean;
   readonly onBack: () => void;
@@ -458,7 +463,7 @@ export function ConversationView(props: ConversationViewProps) {
   const view = props.pageKey ? "detail" : props.view;
   const room = <><WorkspacePageOutlet />{props.renderDiscussion?.(content) ?? content}</>;
   return <Theme mode={props.theme} accent="citron" style={{ height: "100%", minHeight: 0 }}>
-    <WorkspacePageProvider pageKey={props.pageKey}>
+    <PersonCards scope={props.personCards}><WorkspacePageProvider pageKey={props.pageKey}>
     {props.kretsrom ? <KretsromLayout view={view} masthead={masthead} directory={directory}
       roomId={props.timeline.channelId} title={props.title} context={props.context} actions={props.contextActions}
       showRoom={!props.emptyContent && !props.pageKey} backLabel={props.navigation.directoryScope === "direct" ? "Samtalar" : "Kretsar"}
@@ -467,6 +472,6 @@ export function ConversationView(props: ConversationViewProps) {
         {room}<PanelResizers discussion={discussion} threadOpen={Boolean(props.thread) && !props.pageKey} />
       </AppShell>}
     {props.overlays}
-    </WorkspacePageProvider>
+    </WorkspacePageProvider></PersonCards>
   </Theme>;
 }

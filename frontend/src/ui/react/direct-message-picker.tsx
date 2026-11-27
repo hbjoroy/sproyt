@@ -1,3 +1,4 @@
+import { PersonCardButton } from "./person-card";
 import { Avatar, Button, Status, TextField } from "@sproyt/ui/react";
 import { useEffect, useRef, useState } from "react";
 import type { ConversationSnapshot } from "../../application/conversation-snapshot";
@@ -81,7 +82,7 @@ export function DirectMessagePicker({ host, snapshot, onClose, onSelectChannel }
         <span className="sp-direct-person-copy"><span className="sp-direct-person-name">{person.display_name}</span>
           <span className="sp-direct-person-detail">{[person.handle ? `@${person.handle}` : "", existing ? "Opne samtale" : "Ny samtale"].filter(Boolean).join(" · ")}</span></span>
         <span className="sp-direct-person-arrow" aria-hidden="true">→</span>
-      </Button></li>;
+      </Button><PersonCardButton id={person.id} name={person.display_name} /></li>;
     })}</ul>
   </section>;
 }

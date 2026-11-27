@@ -17,6 +17,7 @@ export type TimelineControls = Pick<TimelineProps,
 export interface ConversationHostBindings {
   readonly markAllRead?: ConversationViewProps["navigation"]["markAllRead"];
   readonly favorites?: ConversationViewProps["navigation"]["favorites"];
+  readonly personCards?: ConversationViewProps["personCards"];
   readonly ownerId?: string;
   readonly directoryScope?: "circles" | "direct";
   readonly onDirectoryScopeChange?: (scope: "circles" | "direct") => void;
@@ -92,7 +93,7 @@ export function createConversationViewProps(snapshot: ConversationSnapshot, host
   return {
     kretsrom: host.kretsrom, runtime: host.runtime, theme: host.theme, view: host.view, pageKey: host.pageKey, header: host.header,
     title: snapshot.title, context, emptyContent: host.emptyContent,
-    contextActions: host.contextActions, onBack: host.onBack, personalSpace: host.personalSpace, isPersonal: channel?.is_personal,
+    personCards: host.personCards, contextActions: host.contextActions, onBack: host.onBack, personalSpace: host.personalSpace, isPersonal: channel?.is_personal,
     navigation: {
       markAllRead: host.markAllRead,
       hasUnread: snapshot.channels.some(channel => channel.has_unread_thread_replies ||
