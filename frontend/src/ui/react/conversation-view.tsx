@@ -8,6 +8,7 @@ import type { ConversationTimelineItem } from "../../application/conversation-sn
 import type { ChatMessage } from "../../types";
 import { ProductConversationNavigation } from "./conversation-navigation";
 import { WorkspacePageOutlet, WorkspacePageProvider } from "./workspace-page";
+import { ConversationImageGallery } from "./conversation-image-gallery";
 import { PanelResizers } from "./panel-resizers";
 import { PersonalSpacePanes } from "./personal-space";
 import type { PersonalSpaceLayout } from "./personal-space";
@@ -125,7 +126,7 @@ export function ConversationTimeline(props: TimelineProps) {
     || visibleIds.has(item.message.id));
   const loadOlder = props.hasOlder && !props.error && props.onLoadOlder && <Button busy={props.loading}
     disabled={props.loading} onClick={props.onLoadOlder}>{matches ? "Last eldre treff" : "Last eldre meldingar"}</Button>;
-  return <div className="sp-timeline" id={props.id} hidden={props.hidden} ref={props.viewportRef} onScroll={props.onScroll}
+  const timeline = <div className="sp-timeline" id={props.id} hidden={props.hidden} ref={props.viewportRef} onScroll={props.onScroll}
     aria-label={matches?.label ?? (props.parentMessageId ? "Svar i tråden" : "Meldingar")} aria-busy={props.loading || undefined}>
     {!matches && loadOlder}
     {props.error && <Status tone="error">{props.error}{props.onRetry && <Button onClick={props.onRetry}>Prøv igjen</Button>}</Status>}
@@ -149,6 +150,11 @@ export function ConversationTimeline(props: TimelineProps) {
         </Fragment>)}
     {matches && loadOlder}
   </div>;
+  if (props.parentMessageId) return timeline;
+  const oldest = props.messages.reduce<number | undefined>((first, message) =>
+    first === undefined || message.sequence < first ? message.sequence : first, undefined);
+  return <ConversationImageGallery key={props.channelId} oldest={oldest} loading={props.loading} hasOlder={props.hasOlder}
+    error={props.error} onLoadOlder={props.onLoadOlder}>{timeline}</ConversationImageGallery>;
 }
 
 export type MessagePresentation = Pick<TimelineProps, "formatTime" | "formatAuthor" | "earlyAdopter" | "renderAuthorStatus" | "renderContent" | "renderActions" | "renderReactions" | "renderThreadSummary" | "messageStatus" | "onReactionRequest">;

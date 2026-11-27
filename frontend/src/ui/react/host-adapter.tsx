@@ -1,3 +1,4 @@
+import { ConversationImageGallery } from "./conversation-image-gallery";
 import { messageExcerpt } from "../../message-excerpt";
 import { useLayoutEffect, useRef } from "react";
 import type { ReactNode } from "react";
@@ -127,14 +128,14 @@ export function createConversationViewProps(snapshot: ConversationSnapshot, host
     renderTimeline: host.renderTimeline, renderChannel: host.renderChannel, renderDiscussion: host.renderDiscussion,
     composer: channelId !== null && snapshot.activeChannel !== null
       ? host.renderComposer({ channelId, parentMessageId: null }) : null,
-    thread: threadVisible ? <ThreadPane title="Tråd" context={snapshot.title} closeLabel="Lukk tråden"
+    thread: threadVisible ? <ConversationImageGallery key={thread.rootMessageId}><ThreadPane title="Tråd" context={snapshot.title} closeLabel="Lukk tråden"
       onClose={host.onCloseThread}
       parent={thread.root ? <ConversationMessage message={thread.root} {...host.message} threadParent />
         : <Status>Den opphavlege meldinga er ikkje lasta.</Status>}
       composer={snapshot.activeChannel !== null ? host.renderComposer({ channelId, parentMessageId: thread.rootMessageId }) : null}>
       <ThreadTimeline {...host.message} {...host.threadTimeline}
         channelId={channelId} parentMessageId={thread.rootMessageId} messages={thread.replies} />
-    </ThreadPane> : null,
+    </ThreadPane></ConversationImageGallery> : null,
     overlays: host.overlays
   };
 }

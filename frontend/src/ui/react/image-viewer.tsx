@@ -13,12 +13,15 @@ const clamp = (value: number, minimum: number, maximum: number) => Math.min(maxi
 const distance = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y);
 const midpoint = (a: Point, b: Point): Point => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
 
-export function ImageViewer({ src, downloadSrc, name, onClose }: { src: string; downloadSrc: string; name: string; onClose(): void }) {
+export function ImageViewer({ src, downloadSrc, name, onClose, gallery, onPrevious, onNext }: {
+  src: string; downloadSrc: string; name: string; onClose(): void; gallery?: boolean; onPrevious?(): void; onNext?(): void;
+}) {
   const dialog = useRef<HTMLDialogElement>(null);
   const surface = useRef<HTMLDivElement>(null);
   const image = useRef<HTMLImageElement>(null);
   const pointers = useRef(new Map<number, Point>());
   const gesture = useRef<Gesture | null>(null);
+  const swipe = useRef<{ pointerId: number; origin: Point } | null>(null);
   const tap = useRef<{ pointerId: number; point: Point; startedAt: number } | null>(null);
   const lastTap = useRef<number | null>(null);
   const lastPointerType = useRef("");
@@ -69,12 +72,14 @@ export function ImageViewer({ src, downloadSrc, name, onClose }: { src: string; 
     setReady(true);
     // A resized image/viewport invalidates a drag's old coordinates.
     pointers.current.clear();
+    swipe.current = null;
     gesture.current = null;
     tap.current = null;
     lastTap.current = null;
   };
 
   useEffect(() => {
+    swipe.current = null;
     fitting.current = "width";
     setReady(false);
     update({ scale: 1, x: 0, y: 0 });
@@ -106,6 +111,9 @@ export function ImageViewer({ src, downloadSrc, name, onClose }: { src: string; 
     lastPointerType.current = event.pointerType;
     event.currentTarget.setPointerCapture(event.pointerId);
     pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    const canPanHorizontally = (image.current?.naturalWidth ?? 0) * viewRef.current.scale > event.currentTarget.clientWidth + 1;
+    swipe.current = gallery && event.pointerType === "touch" && pointers.current.size === 1 && !canPanHorizontally
+      ? { pointerId: event.pointerId, origin: { x: event.clientX, y: event.clientY } } : null;
     if (event.pointerType === "touch" && pointers.current.size === 1) {
       tap.current = { pointerId: event.pointerId, point: { x: event.clientX, y: event.clientY }, startedAt: performance.now() };
     } else {
@@ -140,6 +148,16 @@ export function ImageViewer({ src, downloadSrc, name, onClose }: { src: string; 
     }
   };
   const pointerEnd = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const start = swipe.current;
+    swipe.current = null;
+    if (start?.pointerId === event.pointerId) {
+      const dx = event.clientX - start.origin.x;
+      const dy = event.clientY - start.origin.y;
+      if (Math.abs(dx) >= 48 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+        if (dx < 0) onNext?.();
+        else onPrevious?.();
+      }
+    }
     const now = performance.now();
     const isTap = event.pointerType === "touch" && tap.current?.pointerId === event.pointerId
       && now - tap.current.startedAt < 320
@@ -154,6 +172,7 @@ export function ImageViewer({ src, downloadSrc, name, onClose }: { src: string; 
   };
   const pointerCancel = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (!pointers.current.has(event.pointerId)) return;
+    swipe.current = null;
     tap.current = null;
     lastTap.current = null;
     pointers.current.delete(event.pointerId);
@@ -168,14 +187,26 @@ export function ImageViewer({ src, downloadSrc, name, onClose }: { src: string; 
   return <dialog ref={dialog} className="sp-image-viewer" aria-labelledby={titleId}
     onCancel={event => { event.preventDefault(); onClose(); }} onClose={onClose}
     onKeyDown={event => {
-      if (!ready || event.ctrlKey || event.metaKey || event.altKey) return;
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      if (gallery && !event.shiftKey && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.key === "ArrowLeft") onPrevious?.();
+        else onNext?.();
+        return;
+      }
+      if (!ready) return;
       if (event.key === "+" || event.key === "=") zoom(viewRef.current.scale * 1.25);
       if (event.key === "-") zoom(viewRef.current.scale / 1.25);
       if (event.key === "0") actualSize();
     }}>
     <header className="sp-image-viewer-head">
-      <h2 id={titleId}>{name}</h2>
+      <h2 id={titleId} aria-live={gallery ? "polite" : undefined}>{name}</h2>
       <div className="sp-image-viewer-actions">
+        {gallery && <>
+          <button type="button" className="sp-image-viewer-control" aria-disabled={!onPrevious} aria-label="Førre bilete" onClick={onPrevious}>←</button>
+          <button type="button" className="sp-image-viewer-control" aria-disabled={!onNext} aria-label="Neste bilete" onClick={onNext}>→</button>
+        </>}
         <ImageDownloadLink className="sp-image-viewer-control" href={downloadSrc} name={name} />
         <button type="button" className="sp-image-viewer-control" aria-label="Lukk bilete" title="Lukk bilete" onClick={onClose}>×</button>
       </div>

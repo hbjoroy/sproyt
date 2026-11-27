@@ -211,7 +211,7 @@
 .sp-image-viewer-reset { min-width: 64px; font-size: .8rem; }
 .sp-image-viewer-control:hover, .sp-image-viewer-control:focus-visible,
 .sp-image-viewer-reset:hover, .sp-image-viewer-reset:focus-visible { background: #fff2; outline-color: #fff; }
-.sp-image-viewer-control:disabled { opacity: .35; cursor: default; }
+.sp-image-viewer-control:disabled, .sp-image-viewer-control[aria-disabled="true"] { opacity: .35; cursor: default; }
 /* Private image work belongs with the draft, in a distinct bounded panel. */
 .sp-imagegen {
   display: flex; flex-direction: column; min-width: 0; min-height: 0; max-height: 45dvh;

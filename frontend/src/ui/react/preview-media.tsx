@@ -1,8 +1,10 @@
 import { Button, Dialog, Status } from "@sproyt/ui/react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { MediaObject } from "../../types";
 import { ImageDownloadLink } from "./image-download-link";
 import { ImageViewer } from "./image-viewer";
+
+import { useConversationImageGallery } from "./conversation-image-gallery";
 
 /** URLs are constructed from validated server IDs, never from user-authored URLs. */
 function mediaUrl(id: string, suffix: "" | "/preview" | "/download" = "") {
@@ -45,6 +47,16 @@ export function PreviewImage({ id, name, className }: { id: string; name: string
 function MediaFigure({ id, contentType, name, onOpen, fullResolution = false }: {
   id: string; contentType: string; name: string; onOpen?: () => void; fullResolution?: boolean;
 }) {
+  const gallery = useConversationImageGallery();
+  const thumbnail = useRef<HTMLButtonElement | null>(null);
+  const register = useCallback((button: HTMLButtonElement | null) => {
+    thumbnail.current = button;
+    if (button && gallery) return gallery.register(button, { src: mediaUrl(id), downloadSrc: mediaUrl(id, "/download"), name });
+  }, [gallery, id, name]);
+  const open = () => {
+    if (gallery && thumbnail.current) gallery.select(thumbnail.current);
+    else onOpen?.();
+  };
   const isVideo = contentType.startsWith("video/");
   if (!isVideo && !contentType.startsWith("image/")) return <figure className="sp-media-figure">
     <figcaption><span title={name}>{name}</span>
@@ -56,13 +68,13 @@ function MediaFigure({ id, contentType, name, onOpen, fullResolution = false }: 
     {isVideo
       ? <video src={mediaUrl(id)} controls preload="metadata" aria-label={name} />
       : onOpen
-        ? <button type="button" aria-label={`Vis ${name} i full storleik`} onClick={onOpen}
+        ? <button type="button" aria-label={`Vis ${name} i full storleik`} ref={register} onClick={open}
             className="sp-media-open">
             <PreviewImage id={id} name={name} />
           </button>
         : fullResolution ? <img src={mediaUrl(id)} alt={name} /> : <PreviewImage id={id} name={name} />}
     <figcaption><span title={name}>{name}</span>{onOpen
-      ? <button type="button" className="sp-media-original" onClick={onOpen}
+      ? <button type="button" className="sp-media-original" onClick={open}
           aria-label="Vis originalbiletet">Original</button>
       : isVideo && <a href={mediaUrl(id)} target="_blank" rel="noopener noreferrer">Original ↗</a>}
     {(onOpen || isVideo) && <ImageDownloadLink className="sp-media-download" href={mediaUrl(id, "/download")} name={name} nativeOnly={isVideo} />}</figcaption>
