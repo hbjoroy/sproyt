@@ -22,6 +22,9 @@ export function avatarActions(http: HttpClient, current: () => string | null, ep
       if (photo.size > 8 * 1024 * 1024) return Promise.reject(new Error("Vel eit foto på høgst 8 MiB."));
       return http.json(`/api/v1/me/avatar/generate/${style}/${request}`, decode, { method: "POST", headers: headers(owner), body: photo }, fence(owner));
     },
+    retry(owner, id) {
+      return http.json(`/api/v1/me/avatar/${encodeURIComponent(id)}/retry`, decode, { method: "POST", headers: headers(owner) }, fence(owner));
+    },
     review(owner, id, approve) {
       return http.empty(`/api/v1/me/avatar/${encodeURIComponent(id)}/review`, { method: "POST", headers: { ...headers(owner), "content-type": "application/json" }, body: JSON.stringify({ approve }) }, fence(owner));
     }

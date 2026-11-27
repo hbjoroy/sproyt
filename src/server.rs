@@ -381,6 +381,10 @@ pub(super) fn build_router(state: AppState, operations: OperationalState) -> Rou
             get(crate::web::avatars::preview),
         )
         .route(
+            "/api/v1/me/avatar/{id}/retry",
+            post(crate::web::avatars::retry),
+        )
+        .route(
             "/api/v1/me/avatar/{id}/review",
             post(crate::web::avatars::review),
         )

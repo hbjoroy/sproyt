@@ -516,7 +516,9 @@ impl ImageGeneration {
                 continue;
             }
             if job.state == "submitting" {
-                job.reference_images.clear();
+                if !job.is_avatar() {
+                    job.reference_images.clear();
+                }
                 job.transition("failed");
                 job.error = Some("The server restarted during submission. The image may still be in ComfyUI; it was not queued again automatically.".into());
             } else if job.state == "queued" {
@@ -607,7 +609,9 @@ impl ImageGeneration {
                         job.error = Some("Could not confirm the request with Santorini. It has not been retried automatically.".into());
                     }
                 }
-                job.reference_images.clear();
+                if job.state == "running" || !job.is_avatar() {
+                    job.reference_images.clear();
+                }
             } else {
                 match self.gateway.result(&job).await {
                     Ok(Some(image)) => {
@@ -715,7 +719,7 @@ impl Gateway {
         if image["type"] != "output" || !filename.ends_with(".png") {
             return Err("unexpected output".into());
         }
-        let mut response = self
+        let response = self
             .http
             .get(format!("{}/view", self.base))
             .query(&[
@@ -726,6 +730,14 @@ impl Gateway {
             .send()
             .await?
             .error_for_status()?;
+        let content = Self::image_bytes(response).await?;
+        if !content.starts_with(b"\x89PNG\r\n\x1a\n") {
+            return Err("invalid image".into());
+        }
+        Ok(Some(content))
+    }
+
+    async fn image_bytes(mut response: reqwest::Response) -> Result<Vec<u8>, Error> {
         if response
             .content_length()
             .is_some_and(|n| n > MAX_IMAGE as u64)
@@ -739,10 +751,7 @@ impl Gateway {
             }
             content.extend_from_slice(&chunk);
         }
-        if !content.starts_with(b"\x89PNG\r\n\x1a\n") {
-            return Err("invalid image".into());
-        }
-        Ok(Some(content))
+        Ok(content)
     }
 }
 

@@ -1,5 +1,8 @@
 use super::{Error, ImageGeneration, Job, Store};
 use crate::domain::UserId;
+use base64::{Engine, engine::general_purpose::STANDARD};
+use sha2::{Digest, Sha256};
+use uuid::Uuid;
 
 // Workshop references are media UUIDs. This marker also survives older workers.
 pub(crate) const REFERENCE_PREFIX: &str = "profile-avatar:";
@@ -16,6 +19,50 @@ mod tests {
     use crate::domain::ChannelId;
     use crate::imagegen::PromptMode;
     use uuid::Uuid;
+
+    #[tokio::test]
+    async fn retry_replaces_one_preview_and_reuses_the_original_reference() {
+        let service = ImageGeneration::test("http://unused").await;
+        let owner = UserId::from_uuid(Uuid::now_v7());
+        let mut old = service
+            .enqueue_with_mode(
+                owner.clone(),
+                ChannelId::generate(),
+                Uuid::now_v7(),
+                "old prompt".into(),
+                vec![(format!("{REFERENCE_PREFIX}test"), "original".into())],
+                PromptMode::Literal,
+            )
+            .await
+            .unwrap();
+        old.transition("ready");
+        old.image = Some("old preview".into());
+        assert!(service.save(&mut old).await.unwrap());
+
+        let next = service
+            .retry_avatar(old.clone(), "new pose".into())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_ne!(next.created_at, old.created_at);
+        assert_eq!(next.reference_images, ["original"]);
+        assert_eq!(next.prompt, "new pose");
+        assert_eq!(next.state, "queued");
+        assert!(next.image.is_none());
+        let retired = service.get(&old.id).await.unwrap().unwrap();
+        assert_eq!(retired.state, "declined");
+        assert!(retired.reference_images.is_empty() && retired.image.is_none());
+        let replay = service
+            .retry_avatar(retired, "new pose".into())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(replay.id, next.id);
+        assert_eq!(
+            service.avatar_job(owner).await.unwrap().unwrap().id,
+            next.id
+        );
+    }
 
     #[tokio::test]
     async fn approval_publishes_only_the_ready_revision_and_retires_its_preview() {
@@ -104,6 +151,100 @@ impl ImageGeneration {
             "SELECT {projection} FROM image_generation_jobs WHERE owner_id=$1 AND state IN ('queued','submitting','running','ready','failed') AND {marker} LIKE 'profile-avatar:%' ORDER BY updated_at DESC LIMIT 1"
         );
         Ok(self.query_jobs(&sql, &owner.to_string()).await?.pop())
+    }
+
+    // One successor per draft makes a repeated POST, including from another tab,
+    // idempotent. The slot and the previous preview change in one transaction.
+    pub(crate) async fn retry_avatar(
+        &self,
+        mut prior: Job,
+        prompt: String,
+    ) -> Result<Option<Job>, Error> {
+        if !prior.is_avatar() {
+            return Ok(None);
+        }
+        let next_id = Uuid::new_v5(&Uuid::parse_str(&prior.id)?, b"avatar-variant").to_string();
+        if let Some(existing) = self.get(&next_id).await? {
+            return Ok(Some(existing));
+        }
+        if !matches!(prior.state.as_str(), "ready" | "failed") {
+            return Ok(None);
+        }
+
+        let reference = if let [source] = prior.reference_images.as_slice() {
+            source.clone()
+        } else {
+            // Legacy previews only retain a hash after uploading the reference.
+            let filename = format!("{}-0.jpg", prior.id);
+            let response = self
+                .gateway
+                .http
+                .get(format!("{}/view", self.gateway.base))
+                .query(&[
+                    ("filename", filename.as_str()),
+                    ("subfolder", "sproyt-private"),
+                    ("type", "input"),
+                ])
+                .send()
+                .await?
+                .error_for_status()?;
+            let bytes = super::Gateway::image_bytes(response).await?;
+            if prior.reference_ids[0]
+                != format!(
+                    "{REFERENCE_PREFIX}{}",
+                    STANDARD.encode(Sha256::digest(&bytes))
+                )
+            {
+                return Err("avatar reference mismatch".into());
+            }
+            STANDARD.encode(bytes)
+        };
+
+        let previous_revision = prior.revision;
+        let mut next = prior.clone();
+        next.id = next_id;
+        next.prompt = prompt;
+        next.mode = super::PromptMode::Literal;
+        next.expansion = Some(crate::imagegen_prompt::literal_expansion(&next.prompt, 1));
+        next.reference_images = vec![reference];
+        // Workers use created_at as the sampler seed, including older workers.
+        next.created_at = super::now().max(prior.created_at + 1);
+        next.transition("queued");
+        next.revision = 0;
+        next.prompt_id = None;
+        next.image = None;
+        next.error = None;
+        let data = serde_json::to_string(&next)?;
+        prior.transition("declined");
+        prior.revision += 1;
+        prior.image = None;
+        prior.reference_images.clear();
+        let tombstone = serde_json::to_string(&prior)?;
+        macro_rules! replace {
+            ($pool:expr) => {{
+                let mut tx = $pool.begin().await?;
+                let changed = sqlx::query("update image_generation_jobs set state='declined',updated_at=$1,revision=$2,data=$3 where id=$4 and revision=$5 and state in ('ready','failed')")
+                    .bind(prior.updated_at).bind(prior.revision).bind(&tombstone).bind(&prior.id).bind(previous_revision)
+                    .execute(&mut *tx).await?.rows_affected();
+                if changed == 1 {
+                    for slot in 1..=8 {
+                        let added = sqlx::query("insert into image_generation_jobs(id,owner_id,channel_id,state,slot,updated_at,data) values($1,$2,$3,'queued',$4,$5,$6) on conflict do nothing")
+                            .bind(&next.id).bind(next.owner_id.to_string()).bind(next.channel_id.to_string())
+                            .bind(slot).bind(next.updated_at).bind(&data).execute(&mut *tx).await?.rows_affected();
+                        if added == 1 {
+                            tx.commit().await?;
+                            return Ok(Some(next));
+                        }
+                    }
+                }
+                tx.rollback().await?;
+            }};
+        }
+        match &self.store {
+            Store::Postgres(pool) => replace!(pool),
+            Store::Sqlite(pool) => replace!(pool),
+        }
+        self.get(&next.id).await
     }
 
     pub(crate) async fn approve_avatar(&self, mut job: Job, jpeg: Vec<u8>) -> Result<bool, Error> {

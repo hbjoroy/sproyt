@@ -60,6 +60,23 @@ pub(crate) enum Style {
     Oil,
 }
 
+impl Style {
+    fn material(&self) -> &'static str {
+        match self {
+            Self::Pencil => "coloured pencil drawing on fine paper",
+            Self::Comic => "comic-book illustration with ink outlines and flat colours",
+            Self::Oil => "oil painting with visible brushstrokes",
+        }
+    }
+
+    fn prompt(&self) -> String {
+        format!(
+            "Create a centered head-and-shoulders portrait as a {}. Start with a straight-on camera view. Keep the shoulders square to the camera and the head upright. Turn the face just 15 degrees toward the right edge of the finished picture (the viewer's right). The nose points slightly to the right of center. Show both eyes fully and both cheeks, with a nearly frontal face. Follow this pose even if the reference pose differs. Preserve the person's identity, age, hair and facial features. Fit the whole head inside the central square, with a simple background and no text.",
+            self.material()
+        )
+    }
+}
+
 pub(crate) async fn generate(
     State(state): State<AppState>,
     Path((style, request)): Path<(Style, Uuid)>,
@@ -95,14 +112,7 @@ pub(crate) async fn generate(
         STANDARD.encode(Sha256::digest(&jpeg))
     );
     let encoded = STANDARD.encode(jpeg);
-    let material = match style {
-        Style::Pencil => "coloured pencil drawing on fine paper",
-        Style::Comic => "comic-book illustration with ink outlines and flat colours",
-        Style::Oil => "oil painting with visible brushstrokes",
-    };
-    let prompt = format!(
-        "Make a head-and-shoulders profile portrait in the style of a {material}. Preserve the person's distinctive appearance and head from the supplied photograph. Place the entire head in the central square of the composition, with a simple background and no text."
-    );
+    let prompt = style.prompt();
     let owner = user.id.clone();
     state
         .chat
@@ -139,6 +149,27 @@ async fn owned(svc: &ImageGeneration, owner: UserId, id: Uuid) -> Result<Job, Re
         .map_err(|_| unavailable())?
         .filter(|job| job.owner_id == owner && job.is_avatar())
         .ok_or_else(|| StatusCode::NOT_FOUND.into_response())
+}
+
+pub(crate) async fn retry(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Query(query): Query<WsQuery>,
+    headers: HeaderMap,
+) -> Result<Response, Response> {
+    let user = authenticated_user(&state, query, &headers).await?;
+    let svc = service(&state)?;
+    let prior = owned(svc, user.id, id).await?;
+    // The material is present in prompts written by both avatar versions.
+    let style = [Style::Pencil, Style::Comic, Style::Oil]
+        .into_iter()
+        .find(|s| prior.prompt.contains(s.material()))
+        .ok_or_else(|| StatusCode::CONFLICT.into_response())?;
+    let next = svc.retry_avatar(prior, style.prompt()).await.map_err(|cause| {
+        tracing::warn!(%cause, "could not retry avatar generation");
+        error(StatusCode::SERVICE_UNAVAILABLE, "Kunne ikkje lage ein ny variant. Prøv igjen. Viss originalfotoet er borte, kan du forkaste utkastet og velje fotoet på nytt.")
+    })?.ok_or_else(|| error(StatusCode::CONFLICT, "Utkastet har endra seg, eller biletkøen er full. Hent status og prøv igjen."))?;
+    Ok(private(draft(&next)))
 }
 
 async fn thumbnail(job: &Job) -> Result<Vec<u8>, Response> {
@@ -218,7 +249,13 @@ pub(crate) async fn review(
     } else {
         return Err(StatusCode::CONFLICT.into_response());
     };
-    if !changed.map_err(|_| unavailable())? {
+    if !changed.map_err(|cause| {
+        tracing::warn!(%cause, "could not save profile avatar decision");
+        error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Kunne ikkje lagre valet ditt. Prøv igjen om litt.",
+        )
+    })? {
         return Err(StatusCode::CONFLICT.into_response());
     }
     Ok(StatusCode::NO_CONTENT.into_response())
